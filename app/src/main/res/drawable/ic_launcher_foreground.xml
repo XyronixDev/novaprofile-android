@@ -3,10 +3,8 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- White block "N" on the green adaptive-icon background. Own mark. -->
     <path
-        android:fillColor="#7C6CFF"
-        android:pathData="M54,10 L90,30 L90,78 L54,98 L18,78 L18,30 Z" />
-    <path
-        android:fillColor="#0F1226"
-        android:pathData="M42,34 L66,34 L66,44 L52,44 L52,52 L64,52 L64,62 L52,62 L52,76 L42,76 Z" />
+        android:fillColor="#FFFFFF"
+        android:pathData="M36,30 H46 V52 L68,30 H78 V78 H68 V56 L46,78 H36 Z" />
 </vector>
