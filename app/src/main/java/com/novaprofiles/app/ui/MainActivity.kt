@@ -863,6 +863,33 @@ private fun ProxiesTab(
             ) { Text("Save proxy") }
         }
 
+        // Free US proxies (v2.1): one tap fetches a few public US proxies
+        // to test — free ones are best-effort, Test before use.
+        var fetchingFree by remember { mutableStateOf(false) }
+        var freeNotice by remember { mutableStateOf<String?>(null) }
+        Button(
+            onClick = {
+                fetchingFree = true
+                freeNotice = null
+                scope.launch {
+                    val found = proxyStore.fetchFreeProxies("US")
+                    if (found.isEmpty()) {
+                        freeNotice = "No free proxies fetched — check your connection and try again."
+                    } else {
+                        for (p in found) proxyStore.add(p)
+                        freeNotice = "${found.size} free US proxies added — Test each before use."
+                    }
+                    fetchingFree = false
+                }
+            },
+            enabled = !fetchingFree,
+            colors = ButtonDefaults.buttonColors(containerColor = GoGreen),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(if (fetchingFree) "Fetching free proxies…" else "Get free US proxies")
+        }
+        freeNotice?.let { Text(it, color = GoGreyText) }
+
         // Saved proxies.
         if (savedProxies.isEmpty()) {
             Text("No saved proxies yet.", color = GoGreyText)
