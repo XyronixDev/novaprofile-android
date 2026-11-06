@@ -77,7 +77,11 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import com.novaprofiles.app.util.ProxyEntry
+import com.novaprofiles.app.util.ProxyStore
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -99,6 +103,39 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+}
+
+/** Profile templates (v2.0 Pro): one tap fills home URL + identity. */
+fun applyTemplate(draft: Profile, template: String): Profile = when (template) {
+    "Facebook" -> draft.copy(
+        homeUrl = "https://www.facebook.com",
+        userAgentPreset = "Chrome Android",
+        language = "en-US",
+        timezone = "America/New_York",
+        screenWidth = 1080, screenHeight = 2400
+    )
+    "Google" -> draft.copy(
+        homeUrl = "https://www.google.com",
+        userAgentPreset = "Chrome Android",
+        language = "en-US",
+        timezone = "America/Los_Angeles",
+        screenWidth = 1080, screenHeight = 2400
+    )
+    "Amazon" -> draft.copy(
+        homeUrl = "https://www.amazon.com",
+        userAgentPreset = "Chrome Desktop",
+        language = "en-US",
+        timezone = "America/New_York",
+        screenWidth = 1920, screenHeight = 1080
+    )
+    "TikTok" -> draft.copy(
+        homeUrl = "https://www.tiktok.com",
+        userAgentPreset = "Chrome Android",
+        language = "en-US",
+        timezone = "America/Los_Angeles",
+        screenWidth = 1080, screenHeight = 2400
+    )
+    else -> draft
 }
 
 /** Country flag + code derived from the profile language (display only). */
@@ -142,8 +179,20 @@ fun MainScreen(vm: ProfileViewModel = viewModel()) {
     var showAbout by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<Profile?>(null) }
     var tab by remember { mutableStateOf(HomeTab.PROFILES) }
-    var runningId by remember { mutableStateOf<Long?>(null) }
+    var runningIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var searchOpen by remember { mutableStateOf(false) }
+    var labProfile by remember { mutableStateOf<Profile?>(null) }
+    val proxyStore = remember { ProxyStore(ctx) }
+
+    /** Sessions (v2.0 Pro): tell a running browser to stop itself. */
+    fun stopProfile(id: Long?) {
+        val intent = Intent("com.novaprofiles.app.STOP_PROFILE").apply {
+            setPackage(ctx.packageName)
+            if (id != null) putExtra("profile_id", id)
+        }
+        ctx.sendBroadcast(intent)
+        runningIds = if (id == null) emptySet() else runningIds - id
+    }
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/zip")
@@ -177,6 +226,12 @@ fun MainScreen(vm: ProfileViewModel = viewModel()) {
             proxyCheckResult = proxyCheck,
             onClearNotice = { vm.clearNotices() }
         )
+        return
+    }
+
+    // Fingerprint Lab (v2.0 Pro) — full-screen check for one profile.
+    labProfile?.let { lp ->
+        FingerprintLabScreen(profile = lp, onBack = { labProfile = null })
         return
     }
 
@@ -251,27 +306,43 @@ fun MainScreen(vm: ProfileViewModel = viewModel()) {
                     showTrash = showTrash,
                     searchOpen = searchOpen,
                     onSearchOpen = { searchOpen = it },
-                    runningId = runningId,
+                    runningIds = runningIds,
                     onRun = { p ->
-                        runningId = p.id
+                        runningIds = runningIds + p.id
                         vm.markRun(p.id)
                         ctx.startActivity(BrowserActivity.intent(ctx, p.id))
                     },
-                    onStop = { runningId = null },
+                    onStop = { p -> stopProfile(p.id) },
+                    onStopAll = { stopProfile(null) },
                     onEdit = { editing = it },
                     onDuplicate = { vm.duplicate(it) },
                     onTrash = { pendingDelete = it },
                     onRestore = { vm.restore(it) },
                     onDeleteForever = { pendingDelete = it },
+                    onCheckFingerprint = { labProfile = it },
                     onShowAbout = { showAbout = true }
                 )
                 HomeTab.PROXIES -> ProxiesTab(
+                    proxyStore = proxyStore,
                     profiles = profiles,
                     proxyCheckResult = proxyCheck,
                     onCheckProxy = { p -> vm.checkProxy(p, "https://api.ipify.org") },
-                    onClearNotice = { vm.clearNotices() }
+                    onClearNotice = { vm.clearNotices() },
+                    onAssignProxy = { entry, p ->
+                        vm.update(
+                            p.copy(
+                                proxyMode = entry.mode,
+                                proxyHost = entry.host,
+                                proxyPort = entry.port,
+                                proxyUser = entry.user,
+                                proxyPass = entry.pass
+                            )
+                        )
+                    }
                 )
                 HomeTab.SETTINGS -> SettingsTab(
+                    profiles = profiles,
+                    onOpenLab = { labProfile = it },
                     trashCount = trash.size,
                     onExport = { exportLauncher.launch("novaprofile-profiles.zip") },
                     onImport = { importLauncher.launch(arrayOf("*/*")) },
@@ -291,12 +362,13 @@ fun MainScreen(vm: ProfileViewModel = viewModel()) {
             title = { Text("About NovaProfile") },
             text = {
                 Text(
-                    "NovaProfile 1.1.0 — original multi-profile browser.\n\n" +
-                        "• Unlimited profiles, everything free, no billing.\n" +
+                    "NovaProfile 2.0.0 Pro — original multi-profile browser.\n\n" +
+                        "• Unlimited profiles, everything free, no billing, no trial.\n" +
                         "• Per-profile cookies, proxy, user-agent, language, " +
                         "screen, WebGL and Canvas settings.\n" +
                         "• Multi-tab browser with history, bookmarks, downloads, " +
                         "desktop mode, find in page and translate.\n" +
+                        "• Pro: Fingerprint Lab, Proxy Manager, templates, sessions.\n" +
                         "• Fingerprint protection is JS-level inside the system " +
                         "WebView — it is NOT a Chromium fork and advanced " +
                         "fingerprint tests can still detect the real device.\n" +
@@ -373,14 +445,16 @@ private fun ProfilesTab(
     showTrash: Boolean,
     searchOpen: Boolean,
     onSearchOpen: (Boolean) -> Unit,
-    runningId: Long?,
+    runningIds: Set<Long>,
     onRun: (Profile) -> Unit,
-    onStop: () -> Unit,
+    onStop: (Profile) -> Unit,
+    onStopAll: () -> Unit,
     onEdit: (Profile) -> Unit,
     onDuplicate: (Profile) -> Unit,
     onTrash: (Profile) -> Unit,
     onRestore: (Profile) -> Unit,
     onDeleteForever: (Profile) -> Unit,
+    onCheckFingerprint: (Profile) -> Unit,
     onShowAbout: () -> Unit
 ) {
     Column(Modifier.fillMaxSize()) {
@@ -462,6 +536,31 @@ private fun ProfilesTab(
         }
         Spacer(Modifier.height(4.dp))
 
+        // Sessions banner (v2.0 Pro): running profiles + Stop all.
+        if (runningIds.isNotEmpty() && !showTrash) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(GoGreen)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "${runningIds.size} profile${if (runningIds.size > 1) "s" else ""} running",
+                    color = GoGreenDark,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = onStopAll) { Text("Stop all", color = GoStopRed) }
+            }
+        }
+
         val shown = if (showTrash) trash else profiles
         if (shown.isEmpty()) {
             Column(
@@ -487,14 +586,15 @@ private fun ProfilesTab(
                     GoProfileRow(
                         profile = p,
                         inTrash = showTrash,
-                        running = runningId == p.id,
+                        running = runningIds.contains(p.id),
                         onRun = { onRun(p) },
-                        onStop = onStop,
+                        onStop = { onStop(p) },
                         onEdit = { onEdit(p) },
                         onDuplicate = { onDuplicate(p) },
                         onTrash = { onTrash(p) },
                         onRestore = { onRestore(p) },
-                        onDeleteForever = { onDeleteForever(p) }
+                        onDeleteForever = { onDeleteForever(p) },
+                        onCheckFingerprint = { onCheckFingerprint(p) }
                     )
                 }
             }
@@ -513,7 +613,8 @@ private fun GoProfileRow(
     onDuplicate: () -> Unit,
     onTrash: () -> Unit,
     onRestore: () -> Unit,
-    onDeleteForever: () -> Unit
+    onDeleteForever: () -> Unit,
+    onCheckFingerprint: () -> Unit
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     val (flag, code) = countryOf(profile)
@@ -600,6 +701,10 @@ private fun GoProfileRow(
                         )
                     } else {
                         DropdownMenuItem(
+                            text = { Text("Check fingerprint") },
+                            onClick = { menuOpen = false; onCheckFingerprint() }
+                        )
+                        DropdownMenuItem(
                             text = { Text("Edit") },
                             onClick = { menuOpen = false; onEdit() }
                         )
@@ -652,13 +757,31 @@ private fun GoProfileRow(
     )
 }
 
+/**
+ * Proxy Manager (v2.0 Pro): saved proxies with live test (IP + country +
+ * speed) and one-tap assign to a profile, plus the per-profile check.
+ */
 @Composable
 private fun ProxiesTab(
+    proxyStore: ProxyStore,
     profiles: List<Profile>,
     proxyCheckResult: String?,
     onCheckProxy: (Profile) -> Unit,
-    onClearNotice: () -> Unit
+    onClearNotice: () -> Unit,
+    onAssignProxy: (ProxyEntry, Profile) -> Unit
 ) {
+    val savedProxies by proxyStore.proxies.collectAsState()
+    val scope = rememberCoroutineScope()
+    var checkingId by remember { mutableStateOf<String?>(null) }
+    var assignTarget by remember { mutableStateOf<ProxyEntry?>(null) }
+    var newName by remember { mutableStateOf("") }
+    var newHost by remember { mutableStateOf("") }
+    var newPort by remember { mutableStateOf("8080") }
+    var newMode by remember { mutableStateOf("HTTP") }
+    var newUser by remember { mutableStateOf("") }
+    var newPass by remember { mutableStateOf("") }
+    var formError by remember { mutableStateOf<String?>(null) }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -668,10 +791,146 @@ private fun ProxiesTab(
     ) {
         Text("Proxies", fontWeight = FontWeight.Bold, fontSize = 20.sp)
         Text(
-            "Each profile can use its own HTTP or SOCKS5 proxy. " +
-                "Add one in the profile editor — no proxy is needed to browse.",
+            "Your proxies, saved on this phone. Test one, then assign it to a profile.",
             color = GoGreyText
         )
+
+        // Add-proxy form.
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .border(1.dp, GoDivider, RoundedCornerShape(12.dp))
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text("Add proxy", fontWeight = FontWeight.Bold)
+            OutlinedTextField(
+                value = newName, onValueChange = { newName = it },
+                label = { Text("Name (e.g. US residential)") },
+                modifier = Modifier.fillMaxWidth(), singleLine = true
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                DropDownField(
+                    "Mode", listOf("HTTP", "SOCKS5"), newMode
+                ) { newMode = it }
+            }
+            OutlinedTextField(
+                value = newHost, onValueChange = { newHost = it },
+                label = { Text("Host") },
+                modifier = Modifier.fillMaxWidth(), singleLine = true
+            )
+            OutlinedTextField(
+                value = newPort, onValueChange = { newPort = it },
+                label = { Text("Port") },
+                modifier = Modifier.fillMaxWidth(), singleLine = true
+            )
+            OutlinedTextField(
+                value = newUser, onValueChange = { newUser = it },
+                label = { Text("Username (optional)") },
+                modifier = Modifier.fillMaxWidth(), singleLine = true
+            )
+            OutlinedTextField(
+                value = newPass, onValueChange = { newPass = it },
+                label = { Text("Password (optional)") },
+                modifier = Modifier.fillMaxWidth(), singleLine = true
+            )
+            formError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            Button(
+                onClick = {
+                    val port = newPort.toIntOrNull()
+                    when {
+                        newName.isBlank() -> formError = "Name is required."
+                        newHost.isBlank() -> formError = "Host is required."
+                        port == null || port !in 1..65535 -> formError = "Port must be 1–65535."
+                        else -> {
+                            proxyStore.add(
+                                ProxyEntry(
+                                    name = newName.trim(),
+                                    mode = newMode,
+                                    host = newHost.trim(),
+                                    port = port,
+                                    user = newUser.trim(),
+                                    pass = newPass
+                                )
+                            )
+                            newName = ""; newHost = ""; newPort = "8080"
+                            newUser = ""; newPass = ""; formError = null
+                        }
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = GoGreen)
+            ) { Text("Save proxy") }
+        }
+
+        // Saved proxies.
+        if (savedProxies.isEmpty()) {
+            Text("No saved proxies yet.", color = GoGreyText)
+        }
+        for (entry in savedProxies) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .border(1.dp, GoDivider, RoundedCornerShape(12.dp))
+                    .padding(12.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(entry.name, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    val okChip = entry.lastIp.isNotBlank()
+                    if (okChip) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (entry.ok) Color(0xFFE6F4EA) else Color(0xFFFCE8E6))
+                                .padding(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                if (entry.ok) "Working" else "Failed",
+                                fontSize = 12.sp,
+                                color = if (entry.ok) GoGreenDark else Color(0xFFD93025),
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+                Text("${entry.mode} ${entry.host}:${entry.port}", color = GoGreyText)
+                if (entry.lastIp.isNotBlank()) {
+                    Text(
+                        "IP ${entry.lastIp}" +
+                            (if (entry.country.isNotBlank()) " • ${entry.country}" else "") +
+                            " • ${entry.lastMs} ms",
+                        color = GoGreyText
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            checkingId = entry.id
+                            scope.launch {
+                                val checked = proxyStore.check(entry)
+                                proxyStore.update(checked)
+                                checkingId = null
+                            }
+                        },
+                        enabled = checkingId != entry.id,
+                        colors = ButtonDefaults.buttonColors(containerColor = GoGreen)
+                    ) { Text(if (checkingId == entry.id) "Testing…" else "Test") }
+                    Button(
+                        onClick = { assignTarget = entry },
+                        enabled = profiles.isNotEmpty(),
+                        colors = ButtonDefaults.buttonColors(containerColor = GoGreen)
+                    ) { Text("Assign") }
+                    TextButton(onClick = { proxyStore.remove(entry.id) }) {
+                        Text("Delete", color = Color(0xFFD93025))
+                    }
+                }
+            }
+        }
+
+        // Per-profile proxies (quick check).
+        Text("Profile proxies", fontWeight = FontWeight.Bold, fontSize = 18.sp)
         if (profiles.isEmpty()) {
             Text("No profiles yet.", color = GoGreyText)
         }
@@ -686,20 +945,47 @@ private fun ProxiesTab(
                 Text(p.name, fontWeight = FontWeight.Bold)
                 Text(ProxyHelper.summary(p), color = GoGreyText)
                 Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = { onClearNotice(); onCheckProxy(p) },
-                        colors = ButtonDefaults.buttonColors(containerColor = GoGreen)
-                    ) { Text("Check proxy") }
-                }
+                Button(
+                    onClick = { onClearNotice(); onCheckProxy(p) },
+                    colors = ButtonDefaults.buttonColors(containerColor = GoGreen)
+                ) { Text("Check proxy") }
             }
         }
         proxyCheckResult?.let { Text(it) }
+    }
+
+    // Assign-to-profile picker.
+    assignTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { assignTarget = null },
+            title = { Text("Assign \"${target.name}\" to…") },
+            text = {
+                LazyColumn {
+                    items(profiles, key = { it.id }) { p ->
+                        Text(
+                            p.name,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    onAssignProxy(target, p)
+                                    assignTarget = null
+                                }
+                                .padding(vertical = 12.dp)
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { assignTarget = null }) { Text("Cancel") }
+            }
+        )
     }
 }
 
 @Composable
 private fun SettingsTab(
+    profiles: List<Profile>,
+    onOpenLab: (Profile) -> Unit,
     trashCount: Int,
     onExport: () -> Unit,
     onImport: () -> Unit,
@@ -717,6 +1003,14 @@ private fun SettingsTab(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("Settings", fontWeight = FontWeight.Bold, fontSize = 20.sp)
+        Button(
+            onClick = { profiles.firstOrNull()?.let(onOpenLab) },
+            enabled = profiles.isNotEmpty(),
+            colors = ButtonDefaults.buttonColors(containerColor = GoGreen),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Fingerprint Lab — check a profile")
+        }
         Button(
             onClick = onExport,
             colors = ButtonDefaults.buttonColors(containerColor = GoGreen),
@@ -836,6 +1130,31 @@ fun EditorScreen(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text("Overview", fontWeight = FontWeight.Bold)
+            // Templates (v2.0 Pro): one tap fills the identity below.
+            Text("Template", style = MaterialTheme.typography.labelLarge, color = GoGreyText)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                for (t in listOf("Facebook", "Google", "Amazon", "TikTok")) {
+                    FilterChip(
+                        selected = false,
+                        onClick = {
+                            val filled = applyTemplate(draft, t)
+                            draft = if (initial == null &&
+                                (draft.name == "Profile 1" || draft.name.isBlank())
+                            ) filled.copy(name = t) else filled
+                        },
+                        label = { Text(t) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = Color(0xFFE8EAED),
+                            containerColor = Color.White
+                        )
+                    )
+                }
+            }
             OutlinedTextField(
                 value = draft.name, onValueChange = { draft = draft.copy(name = it) },
                 label = { Text("Name") }, modifier = Modifier.fillMaxWidth(), singleLine = true
