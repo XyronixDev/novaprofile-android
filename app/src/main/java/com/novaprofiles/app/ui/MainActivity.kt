@@ -1284,7 +1284,7 @@ fun EditorScreen(
                                 var working: ProxyEntry? = null
                                 for (c in candidates.take(5)) {
                                     val checked = proxyStore.check(c)
-                                    if (checked.lastCheckOk) {
+                                    if (checked.ok) {
                                         working = checked
                                         break
                                     }
@@ -1301,7 +1301,7 @@ fun EditorScreen(
                                         language = cs.language
                                     )
                                     countryStatus =
-                                        "${cs.label} connected • ${working.ip ?: ""} — " +
+                                        "${cs.label} connected • ${working.lastIp} — " +
                                             "timezone + language auto-matched. " +
                                             "Save the profile to apply."
                                 } else {
