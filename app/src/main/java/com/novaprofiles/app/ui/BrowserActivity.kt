@@ -5,8 +5,10 @@
 package com.novaprofiles.app.ui
 
 import android.app.DownloadManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
@@ -158,10 +160,25 @@ class BrowserActivity : ComponentActivity() {
     private var activeTabId by mutableStateOf(0)
     private var nextTabId = 1
 
+    /** Sessions (v2.0 Pro): the profile list can stop this browser. */
+    private val stopReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val id = intent?.getLongExtra("profile_id", -1) ?: -1
+            val mine = activeProfile?.id ?: -1
+            if (id == -1L || id == mine) finish()
+        }
+    }
+
     private fun activeTab(): BrowserTab? = tabs.firstOrNull { it.id == activeTabId }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ContextCompat.registerReceiver(
+            this,
+            stopReceiver,
+            IntentFilter("com.novaprofiles.app.STOP_PROFILE"),
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
         val profileId = intent.getLongExtra(EXTRA_PROFILE_ID, -1)
         if (profileId == -1L) {
             finish()
@@ -211,6 +228,10 @@ class BrowserActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        try {
+            unregisterReceiver(stopReceiver)
+        } catch (e: Exception) {
+        }
         saveCookiesNow()
         tabs.forEach { it.webView?.destroy() }
         tabs.clear()
