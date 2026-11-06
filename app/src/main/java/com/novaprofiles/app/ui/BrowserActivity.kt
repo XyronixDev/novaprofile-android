@@ -126,6 +126,7 @@ class BrowserActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_PROFILE_ID = "profile_id"
+        const val EXTRA_START_URL = "start_url"
 
         fun intent(context: Context, profileId: Long): Intent =
             Intent(context, BrowserActivity::class.java).apply {
@@ -138,6 +139,7 @@ class BrowserActivity : ComponentActivity() {
     }
 
     private var activeProfile: Profile? = null
+    private var startUrl: String? = null
     private val visitedHosts = mutableSetOf<String>()
     private var suffixApplied = false
     private var setupStatus by mutableStateOf<String?>(null)
@@ -184,6 +186,7 @@ class BrowserActivity : ComponentActivity() {
             finish()
             return
         }
+        startUrl = intent.getStringExtra(EXTRA_START_URL)?.takeIf { it.isNotBlank() }
 
         lifecycleScope.launch {
             val repo = (application as NovaProfileApp).repository
@@ -381,7 +384,9 @@ class BrowserActivity : ComponentActivity() {
     fun BrowserScreen(profile: Profile) {
         val context = LocalContext.current
         if (tabs.isEmpty()) {
-            newTab(profile)
+            val first = newTab(profile)
+            // Deep link (v2.1): e.g. Fingerprint Lab opening whoer.net.
+            startUrl?.let { navigate(first, it); startUrl = null }
         }
         val tab = activeTab() ?: return
         var urlText by remember(tab.id) { mutableStateOf(tab.url) }
