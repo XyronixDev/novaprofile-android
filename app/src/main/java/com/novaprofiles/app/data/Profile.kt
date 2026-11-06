@@ -87,5 +87,30 @@ data class Profile(
         }
 
         fun new(name: String): Profile = Profile(name = name.ifBlank { "Profile 1" })
+
+        // v2.2: one-tap country proxy — timezone + language that match the
+        // country, so a leak-check site sees ONE identity (IP country =
+        // timezone = language). WebRTC is already "disable" by default, so
+        // no real-IP leak through the proxy.
+        data class CountrySettings(
+            val code: String,
+            val label: String,
+            val timezone: String,
+            val language: String
+        )
+
+        val oneTapCountries = listOf("US", "GB", "CA", "AU", "FR", "DE", "NL", "JP")
+
+        fun countrySettings(code: String): CountrySettings = when (code.uppercase()) {
+            "US" -> CountrySettings("US", "United States", "America/New_York", "en-US")
+            "GB" -> CountrySettings("GB", "United Kingdom", "Europe/London", "en-GB")
+            "CA" -> CountrySettings("CA", "Canada", "America/Toronto", "en-CA")
+            "AU" -> CountrySettings("AU", "Australia", "Australia/Sydney", "en-AU")
+            "FR" -> CountrySettings("FR", "France", "Europe/Paris", "fr-FR")
+            "DE" -> CountrySettings("DE", "Germany", "Europe/Berlin", "de-DE")
+            "NL" -> CountrySettings("NL", "Netherlands", "Europe/Amsterdam", "nl-NL")
+            "JP" -> CountrySettings("JP", "Japan", "Asia/Tokyo", "ja-JP")
+            else -> CountrySettings(code.uppercase(), code.uppercase(), "UTC", "en-US")
+        }
     }
 }
