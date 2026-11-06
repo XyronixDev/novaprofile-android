@@ -248,6 +248,22 @@ fun FingerprintLabScreen(profile: Profile, onBack: () -> Unit) {
                     Text(if (result == null) "Run fingerprint check" else "Run again")
                 }
             }
+            Spacer(Modifier.height(8.dp))
+            // Open whoer.net in this profile's browser (v2.1) — the same
+            // public check the reference screenshots use.
+            Button(
+                onClick = {
+                    context.startActivity(
+                        BrowserActivity.intent(context, profile.id).apply {
+                            putExtra(BrowserActivity.EXTRA_START_URL, "https://whoer.net")
+                        }
+                    )
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = GoGreen),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Check on whoer.net")
+            }
             Spacer(Modifier.height(12.dp))
             score?.let {
                 Row(verticalAlignment = Alignment.CenterVertically) {
