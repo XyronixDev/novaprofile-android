@@ -34,7 +34,11 @@ data class ProxyEntry(
     val country: String = "",
     val lastIp: String = "",
     val lastMs: Long = 0,
-    val ok: Boolean = false
+    val ok: Boolean = false,
+    // v2.5: the IP's real timezone from ip-api.com (e.g. a Seattle proxy
+    // reports America/Los_Angeles, not the country default New York).
+    // Profiles take this over the country default so timezone == IP.
+    val lastTimezone: String = ""
 )
 
 class ProxyStore(context: Context) {
@@ -60,7 +64,8 @@ class ProxyStore(context: Context) {
                     country = o.optString("country"),
                     lastIp = o.optString("lastIp"),
                     lastMs = o.optLong("lastMs"),
-                    ok = o.optBoolean("ok")
+                    ok = o.optBoolean("ok"),
+                    lastTimezone = o.optString("lastTimezone")
                 )
             }
         } catch (e: Exception) {
@@ -84,6 +89,7 @@ class ProxyStore(context: Context) {
                     put("lastIp", p.lastIp)
                     put("lastMs", p.lastMs)
                     put("ok", p.ok)
+                    put("lastTimezone", p.lastTimezone)
                 }
             )
         }
@@ -230,10 +236,14 @@ class ProxyStore(context: Context) {
             if (conn.responseCode != 200 || ip.isBlank() || !ip.contains(".")) {
                 return@withContext entry.copy(ok = false, lastMs = System.currentTimeMillis() - started)
             }
-            // Country lookup for that IP (also through the proxy).
+            // Country + timezone lookup for that IP (also through the
+            // proxy). The timezone is the v2.5 anti-detect fix: the IP's
+            // own zone (e.g. America/Los_Angeles for Seattle) must be
+            // the profile's zone, not the country capital's.
             var country = ""
+            var tz = ""
             try {
-                val c2 = URL("http://ip-api.com/json/$ip?fields=status,country,countryCode")
+                val c2 = URL("http://ip-api.com/json/$ip?fields=status,country,countryCode,timezone")
                     .openConnection(proxy) as HttpURLConnection
                 c2.connectTimeout = 6_000
                 c2.readTimeout = 6_000
@@ -242,6 +252,7 @@ class ProxyStore(context: Context) {
                 val o = JSONObject(body)
                 if (o.optString("status") == "success") {
                     country = "${o.optString("countryCode")} • ${o.optString("country")}"
+                    tz = o.optString("timezone")
                 }
             } catch (e: Exception) {
             }
@@ -249,7 +260,8 @@ class ProxyStore(context: Context) {
                 ok = true,
                 country = country,
                 lastIp = ip,
-                lastMs = System.currentTimeMillis() - started
+                lastMs = System.currentTimeMillis() - started,
+                lastTimezone = tz
             )
         } catch (e: Exception) {
             entry.copy(ok = false, lastMs = System.currentTimeMillis() - started)
