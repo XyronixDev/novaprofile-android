@@ -38,7 +38,11 @@ data class ProxyEntry(
     // v2.5: the IP's real timezone from ip-api.com (e.g. a Seattle proxy
     // reports America/Los_Angeles, not the country default New York).
     // Profiles take this over the country default so timezone == IP.
-    val lastTimezone: String = ""
+    val lastTimezone: String = "",
+    // v2.6: the IP's coordinates (Mountain View for the Google Cloud
+    // free proxies) — the profile's geolocation spoof target.
+    val lastLat: Double = 0.0,
+    val lastLon: Double = 0.0
 )
 
 class ProxyStore(context: Context) {
@@ -65,7 +69,9 @@ class ProxyStore(context: Context) {
                     lastIp = o.optString("lastIp"),
                     lastMs = o.optLong("lastMs"),
                     ok = o.optBoolean("ok"),
-                    lastTimezone = o.optString("lastTimezone")
+                    lastTimezone = o.optString("lastTimezone"),
+                    lastLat = o.optDouble("lastLat", 0.0),
+                    lastLon = o.optDouble("lastLon", 0.0)
                 )
             }
         } catch (e: Exception) {
@@ -90,6 +96,8 @@ class ProxyStore(context: Context) {
                     put("lastMs", p.lastMs)
                     put("ok", p.ok)
                     put("lastTimezone", p.lastTimezone)
+                    put("lastLat", p.lastLat)
+                    put("lastLon", p.lastLon)
                 }
             )
         }
@@ -236,14 +244,17 @@ class ProxyStore(context: Context) {
             if (conn.responseCode != 200 || ip.isBlank() || !ip.contains(".")) {
                 return@withContext entry.copy(ok = false, lastMs = System.currentTimeMillis() - started)
             }
-            // Country + timezone lookup for that IP (also through the
-            // proxy). The timezone is the v2.5 anti-detect fix: the IP's
-            // own zone (e.g. America/Los_Angeles for Seattle) must be
-            // the profile's zone, not the country capital's.
+            // Country + timezone + coordinates lookup for that IP (also
+            // through the proxy). The timezone is the v2.5 anti-detect
+            // fix: the IP's own zone (e.g. America/Los_Angeles for
+            // Mountain View) must be the profile's zone, not the country
+            // capital's. Coordinates feed the v2.6 geolocation spoof.
             var country = ""
             var tz = ""
+            var lat = 0.0
+            var lon = 0.0
             try {
-                val c2 = URL("http://ip-api.com/json/$ip?fields=status,country,countryCode,timezone")
+                val c2 = URL("http://ip-api.com/json/$ip?fields=status,country,countryCode,timezone,lat,lon")
                     .openConnection(proxy) as HttpURLConnection
                 c2.connectTimeout = 6_000
                 c2.readTimeout = 6_000
@@ -253,6 +264,8 @@ class ProxyStore(context: Context) {
                 if (o.optString("status") == "success") {
                     country = "${o.optString("countryCode")} • ${o.optString("country")}"
                     tz = o.optString("timezone")
+                    lat = o.optDouble("lat", 0.0)
+                    lon = o.optDouble("lon", 0.0)
                 }
             } catch (e: Exception) {
             }
@@ -261,10 +274,52 @@ class ProxyStore(context: Context) {
                 country = country,
                 lastIp = ip,
                 lastMs = System.currentTimeMillis() - started,
-                lastTimezone = tz
+                lastTimezone = tz,
+                lastLat = lat,
+                lastLon = lon
             )
         } catch (e: Exception) {
             entry.copy(ok = false, lastMs = System.currentTimeMillis() - started)
         }
     }
+
+    /**
+     * v2.6 smart 90% fix: ONE ip-api call through the proxy, returning the
+     * proxy IP's current (ip, timezone, lat, lon). Run time calls this
+     * before opening the browser, so an old profile — or a free proxy
+     * whose IP rotated — never runs with a stale timezone: the free US
+     * proxies sit in Mountain View (America/Los_Angeles), while the
+     * country default is New York, a 3-hour mismatch whoer deducts for.
+     * Returns null on any failure; the caller then launches with the
+     * profile's stored values instead of blocking.
+     */
+    data class Location(val ip: String, val timezone: String, val lat: Double, val lon: Double)
+
+    suspend fun resolveLocation(entry: ProxyEntry): Location? =
+        withContext(Dispatchers.IO) {
+            try {
+                val proxy = Proxy(
+                    if (entry.mode == "SOCKS5") Proxy.Type.SOCKS else Proxy.Type.HTTP,
+                    InetSocketAddress(entry.host, entry.port)
+                )
+                val c = URL("http://ip-api.com/json/?fields=status,query,timezone,lat,lon")
+                    .openConnection(proxy) as HttpURLConnection
+                c.connectTimeout = 6_000
+                c.readTimeout = 6_000
+                val body = c.inputStream.bufferedReader().readText()
+                c.disconnect()
+                val o = JSONObject(body)
+                if (o.optString("status") != "success") return@withContext null
+                val tz = o.optString("timezone")
+                if (tz.isBlank()) return@withContext null
+                Location(
+                    ip = o.optString("query"),
+                    timezone = tz,
+                    lat = o.optDouble("lat", 0.0),
+                    lon = o.optDouble("lon", 0.0)
+                )
+            } catch (e: Exception) {
+                null
+            }
+        }
 }
