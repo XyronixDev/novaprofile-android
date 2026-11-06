@@ -14,8 +14,12 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -23,31 +27,42 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RestoreFromTrash
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -65,15 +80,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.novaprofiles.app.data.Profile
 import com.novaprofiles.app.util.ProxyHelper
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -85,6 +100,28 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
+
+/** Country flag + code derived from the profile language (display only). */
+fun countryOf(profile: Profile): Pair<String, String> = when {
+    profile.language.startsWith("en-GB") -> "🇬🇧" to "GB"
+    profile.language.startsWith("en-CA") -> "🇨🇦" to "CA"
+    profile.language.startsWith("fr") -> "🇫🇷" to "FR"
+    profile.language.startsWith("de") -> "🇩🇪" to "DE"
+    profile.language.startsWith("es") -> "🇪🇸" to "ES"
+    profile.language.startsWith("pt") -> "🇧🇷" to "BR"
+    profile.language.startsWith("it") -> "🇮🇹" to "IT"
+    profile.language.startsWith("nl") -> "🇳🇱" to "NL"
+    profile.language.startsWith("ja") -> "🇯🇵" to "JP"
+    profile.language.startsWith("ko") -> "🇰🇷" to "KR"
+    profile.language.startsWith("zh") -> "🇨🇳" to "CN"
+    profile.language.startsWith("ru") -> "🇷🇺" to "RU"
+    profile.language.startsWith("pl") -> "🇵🇱" to "PL"
+    profile.language.startsWith("tr") -> "🇹🇷" to "TR"
+    profile.language.startsWith("ar") -> "🇸🇦" to "SA"
+    else -> "🇺🇸" to "US"
+}
+
+private enum class HomeTab { PROFILES, PROXIES, SETTINGS }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -104,6 +141,9 @@ fun MainScreen(vm: ProfileViewModel = viewModel()) {
     var creating by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<Profile?>(null) }
+    var tab by remember { mutableStateOf(HomeTab.PROFILES) }
+    var runningId by remember { mutableStateOf<Long?>(null) }
+    var searchOpen by remember { mutableStateOf(false) }
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/zip")
@@ -141,118 +181,106 @@ fun MainScreen(vm: ProfileViewModel = viewModel()) {
     }
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text("NovaProfile", fontWeight = FontWeight.Bold)
-                        Text(
-                            "PRO • All features free",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.secondary
-                        )
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { vm.showTrash.value = !showTrash }) {
-                        Icon(Icons.Filled.Delete, contentDescription = "Trash")
-                    }
-                    IconButton(onClick = { exportLauncher.launch("novaprofile-profiles.zip") }) {
-                        Icon(Icons.Filled.FileUpload, contentDescription = "Export")
-                    }
-                    IconButton(onClick = { importLauncher.launch(arrayOf("*/*")) }) {
-                        Icon(Icons.Filled.FileDownload, contentDescription = "Import")
-                    }
-                    IconButton(onClick = { showAbout = true }) {
-                        Icon(Icons.Filled.Info, contentDescription = "About")
+        bottomBar = {
+            // GoLogin-style bottom: pill nav (Profiles / Proxies / Settings)
+            // + green "Add profile" button.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color.White)
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(32.dp))
+                        .background(Color(0xFFF1F3F4))
+                        .padding(vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    BottomNavItem(
+                        icon = { Icon(Icons.Outlined.Person, null, Modifier.size(22.dp)) },
+                        label = "Profiles",
+                        selected = tab == HomeTab.PROFILES,
+                        onClick = { tab = HomeTab.PROFILES }
+                    )
+                    BottomNavItem(
+                        icon = { Text("🌐", fontSize = 20.sp) },
+                        label = "Proxies",
+                        selected = tab == HomeTab.PROXIES,
+                        onClick = { tab = HomeTab.PROXIES }
+                    )
+                    BottomNavItem(
+                        icon = { Icon(Icons.Filled.Settings, null, Modifier.size(22.dp)) },
+                        label = "Settings",
+                        selected = tab == HomeTab.SETTINGS,
+                        onClick = { tab = HomeTab.SETTINGS }
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Button(
+                    onClick = { creating = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = GoGreen),
+                    shape = RoundedCornerShape(24.dp),
+                    modifier = Modifier.height(56.dp)
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Filled.Add, null, Modifier.size(20.dp))
+                        Text("Add profile", fontSize = 11.sp)
                     }
                 }
-            )
-        },
-        floatingActionButton = {
-            FloatingActionButton(onClick = { creating = true }) {
-                Icon(Icons.Filled.Add, contentDescription = "New profile")
             }
         }
     ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .background(Color.White)
                 .padding(padding)
-                .padding(12.dp)
         ) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = { vm.query.value = it },
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("Search profiles…") },
-                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                singleLine = true
-            )
-            Spacer(Modifier.height(8.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                FilterChip(
-                    selected = selectedFolder == "All",
-                    onClick = { vm.selectedFolder.value = "All" },
-                    label = { Text("All") }
+            when (tab) {
+                HomeTab.PROFILES -> ProfilesTab(
+                    vm = vm,
+                    profiles = profiles,
+                    trash = trash,
+                    folders = folders,
+                    query = query,
+                    selectedFolder = selectedFolder,
+                    showTrash = showTrash,
+                    searchOpen = searchOpen,
+                    onSearchOpen = { searchOpen = it },
+                    runningId = runningId,
+                    onRun = { p ->
+                        runningId = p.id
+                        vm.markRun(p.id)
+                        ctx.startActivity(BrowserActivity.intent(ctx, p.id))
+                    },
+                    onStop = { runningId = null },
+                    onEdit = { editing = it },
+                    onDuplicate = { vm.duplicate(it) },
+                    onTrash = { pendingDelete = it },
+                    onRestore = { vm.restore(it) },
+                    onDeleteForever = { pendingDelete = it },
+                    onShowAbout = { showAbout = true }
                 )
-                for (f in folders) {
-                    FilterChip(
-                        selected = selectedFolder == f,
-                        onClick = { vm.selectedFolder.value = f },
-                        label = { Text(f) }
-                    )
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-
-            val shown = if (showTrash) trash else profiles
-            if (shown.isEmpty()) {
-                Column(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        if (showTrash) "Trash is empty" else "No profiles yet",
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        if (showTrash) "Deleted profiles land here first."
-                        else "Tap + to create your first isolated profile.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            } else {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    items(shown, key = { it.id }) { p ->
-                        ProfileCard(
-                            profile = p,
-                            inTrash = showTrash,
-                            onRun = {
-                                vm.markRun(p.id)
-                                ctx.startActivity(BrowserActivity.intent(ctx, p.id))
-                            },
-                            onEdit = { editing = p },
-                            onDuplicate = { vm.duplicate(p) },
-                            onTrash = { pendingDelete = p },
-                            onRestore = { vm.restore(p) },
-                            onDeleteForever = { pendingDelete = p }
-                        )
-                    }
-                }
-            }
-
-            (importResult ?: exportResult)?.let { msg ->
-                Spacer(Modifier.height(8.dp))
-                Text(msg, style = MaterialTheme.typography.bodySmall)
+                HomeTab.PROXIES -> ProxiesTab(
+                    profiles = profiles,
+                    proxyCheckResult = proxyCheck,
+                    onCheckProxy = { p -> vm.checkProxy(p, "https://api.ipify.org") },
+                    onClearNotice = { vm.clearNotices() }
+                )
+                HomeTab.SETTINGS -> SettingsTab(
+                    trashCount = trash.size,
+                    onExport = { exportLauncher.launch("novaprofile-profiles.zip") },
+                    onImport = { importLauncher.launch(arrayOf("*/*")) },
+                    onShowTrash = { vm.showTrash.value = true; tab = HomeTab.PROFILES },
+                    onHideTrash = { vm.showTrash.value = false },
+                    showTrash = showTrash,
+                    onAbout = { showAbout = true },
+                    notice = importResult ?: exportResult
+                )
             }
         }
     }
@@ -263,10 +291,12 @@ fun MainScreen(vm: ProfileViewModel = viewModel()) {
             title = { Text("About NovaProfile") },
             text = {
                 Text(
-                    "NovaProfile 1.0.0 — original multi-profile browser.\n\n" +
+                    "NovaProfile 1.1.0 — original multi-profile browser.\n\n" +
                         "• Unlimited profiles, everything free, no billing.\n" +
                         "• Per-profile cookies, proxy, user-agent, language, " +
                         "screen, WebGL and Canvas settings.\n" +
+                        "• Multi-tab browser with history, bookmarks, downloads, " +
+                        "desktop mode, find in page and translate.\n" +
                         "• Fingerprint protection is JS-level inside the system " +
                         "WebView — it is NOT a Chromium fork and advanced " +
                         "fingerprint tests can still detect the real device.\n" +
@@ -298,79 +328,439 @@ fun MainScreen(vm: ProfileViewModel = viewModel()) {
 }
 
 @Composable
-fun ProfileCard(
+private fun BottomNavItem(
+    icon: @Composable () -> Unit,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(16.dp))
+                .background(if (selected) Color(0xFFDFF3EC) else Color.Transparent)
+                .padding(horizontal = 12.dp, vertical = 2.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            androidx.compose.runtime.CompositionLocalProvider(
+                androidx.compose.material3.LocalContentColor provides
+                    if (selected) GoGreen else GoGreyText
+            ) { icon() }
+        }
+        Text(
+            label,
+            fontSize = 11.sp,
+            color = if (selected) GoGreen else GoGreyText,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
+        )
+    }
+}
+
+@Composable
+private fun ProfilesTab(
+    vm: ProfileViewModel,
+    profiles: List<Profile>,
+    trash: List<Profile>,
+    folders: List<String>,
+    query: String,
+    selectedFolder: String,
+    showTrash: Boolean,
+    searchOpen: Boolean,
+    onSearchOpen: (Boolean) -> Unit,
+    runningId: Long?,
+    onRun: (Profile) -> Unit,
+    onStop: () -> Unit,
+    onEdit: (Profile) -> Unit,
+    onDuplicate: (Profile) -> Unit,
+    onTrash: (Profile) -> Unit,
+    onRestore: (Profile) -> Unit,
+    onDeleteForever: (Profile) -> Unit,
+    onShowAbout: () -> Unit
+) {
+    Column(Modifier.fillMaxSize()) {
+        // Account row: green avatar + name + search.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(GoGreen),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("N", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 22.sp)
+            }
+            Spacer(Modifier.width(10.dp))
+            Text(
+                "NovaProfile",
+                fontWeight = FontWeight.Bold,
+                fontSize = 20.sp,
+                modifier = Modifier.weight(1f)
+            )
+            IconButton(onClick = { onSearchOpen(!searchOpen) }) {
+                Icon(Icons.Filled.Search, contentDescription = "Search", tint = Color.Black)
+            }
+            IconButton(onClick = onShowAbout) {
+                Icon(Icons.Filled.Info, contentDescription = "About", tint = Color.Black)
+            }
+        }
+        if (searchOpen) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { vm.query.value = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                placeholder = { Text("Search profiles") },
+                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                singleLine = true
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+        // Folder row: folder icon + All + folder pills.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = { /* folders are created in the editor */ }) {
+                Icon(Icons.Filled.Folder, contentDescription = "Folders", tint = Color.Black)
+            }
+            FilterChip(
+                selected = selectedFolder == "All",
+                onClick = { vm.selectedFolder.value = "All" },
+                label = { Text("All") },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = Color(0xFFE8EAED),
+                    containerColor = Color.White
+                )
+            )
+            for (f in folders) {
+                FilterChip(
+                    selected = selectedFolder == f,
+                    onClick = { vm.selectedFolder.value = f },
+                    label = { Text(f) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Color(0xFFE8EAED),
+                        containerColor = Color.White
+                    )
+                )
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+
+        val shown = if (showTrash) trash else profiles
+        if (shown.isEmpty()) {
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    if (showTrash) "Trash is empty" else "No profiles yet",
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    if (showTrash) "Deleted profiles land here first."
+                    else "Tap Add profile to create your first profile.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = GoGreyText
+                )
+            }
+        } else {
+            LazyColumn {
+                items(shown, key = { it.id }) { p ->
+                    GoProfileRow(
+                        profile = p,
+                        inTrash = showTrash,
+                        running = runningId == p.id,
+                        onRun = { onRun(p) },
+                        onStop = onStop,
+                        onEdit = { onEdit(p) },
+                        onDuplicate = { onDuplicate(p) },
+                        onTrash = { onTrash(p) },
+                        onRestore = { onRestore(p) },
+                        onDeleteForever = { onDeleteForever(p) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GoProfileRow(
     profile: Profile,
     inTrash: Boolean,
+    running: Boolean,
     onRun: () -> Unit,
+    onStop: () -> Unit,
     onEdit: () -> Unit,
     onDuplicate: () -> Unit,
     onTrash: () -> Unit,
     onRestore: () -> Unit,
     onDeleteForever: () -> Unit
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    var menuOpen by remember { mutableStateOf(false) }
+    val (flag, code) = countryOf(profile)
+    val connection = when (profile.proxyMode) {
+        "NONE" -> "Direct"
+        "HTTP" -> "HTTP proxy"
+        "SOCKS5" -> "SOCKS5 proxy"
+        else -> profile.proxyMode
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(if (running) GoMintBg else Color.White)
+            .clickable { if (!inTrash) onEdit() }
+            .padding(horizontal = 16.dp, vertical = 12.dp)
     ) {
-        Column(Modifier.padding(14.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(profile.name, fontWeight = FontWeight.Bold)
-                    Text(
-                        "${profile.folder} • ${ProxyHelper.summary(profile)}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        profile.homeUrl,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        if (profile.lastRunAt == 0L) "Never run"
-                        else "Last run: " + SimpleDateFormat(
-                            "dd MMM, HH:mm", Locale.getDefault()
-                        ).format(Date(profile.lastRunAt)),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(GoGreen)
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    profile.name,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp,
+                    color = if (running) GoGreenDark else Color.Black
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    "$flag  $code • $connection",
+                    fontSize = 14.sp,
+                    color = if (running) GoGreenDark else GoGreyText
+                )
+            }
+            Icon(
+                Icons.Filled.Android,
+                contentDescription = null,
+                tint = Color(0xFF9AA0A6),
+                modifier = Modifier.size(26.dp)
+            )
+            Spacer(Modifier.width(10.dp))
+            if (!inTrash) {
+                if (running) {
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .background(GoStopRed)
+                            .clickable { onStop() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Filled.Stop, null, tint = Color.White, modifier = Modifier.size(22.dp))
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .border(1.5.dp, GoGreen, CircleShape)
+                            .clickable { onRun() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Filled.PlayArrow, null, tint = GoGreen, modifier = Modifier.size(24.dp))
+                    }
                 }
-                if (!inTrash) {
-                    IconButton(onClick = onRun) {
-                        Icon(
-                            Icons.Filled.PlayArrow,
-                            contentDescription = "Run",
-                            tint = MaterialTheme.colorScheme.primary
+            }
+            Box {
+                IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Filled.MoreVert, contentDescription = "More", tint = GoGreyText)
+                }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    if (inTrash) {
+                        DropdownMenuItem(
+                            text = { Text("Restore") },
+                            onClick = { menuOpen = false; onRestore() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Delete forever") },
+                            onClick = { menuOpen = false; onDeleteForever() }
+                        )
+                    } else {
+                        DropdownMenuItem(
+                            text = { Text("Edit") },
+                            onClick = { menuOpen = false; onEdit() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Duplicate") },
+                            onClick = { menuOpen = false; onDuplicate() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Move to trash") },
+                            onClick = { menuOpen = false; onTrash() }
                         )
                     }
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                if (inTrash) {
-                    TextButton(onClick = onRestore) {
-                        Icon(Icons.Filled.RestoreFromTrash, contentDescription = null)
-                        Text("Restore")
-                    }
-                    TextButton(onClick = onDeleteForever) {
-                        Icon(Icons.Filled.Delete, contentDescription = null)
-                        Text("Delete")
-                    }
-                } else {
-                    TextButton(onClick = onEdit) {
-                        Icon(Icons.Filled.Edit, contentDescription = null)
-                        Text("Edit")
-                    }
-                    TextButton(onClick = onDuplicate) {
-                        Icon(Icons.Filled.ContentCopy, contentDescription = null)
-                        Text("Copy")
-                    }
-                    TextButton(onClick = onTrash) {
-                        Icon(Icons.Filled.Delete, contentDescription = null)
-                        Text("Trash")
-                    }
+        }
+        // Tag pills: folder + "new" when never run.
+        Row(
+            modifier = Modifier.padding(start = 18.dp, top = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0xFFF1F3F4))
+                    .padding(horizontal = 10.dp, vertical = 4.dp)
+            ) { Text(profile.folder, fontSize = 12.sp, color = GoGreyText) }
+            if (profile.lastRunAt == 0L && !inTrash) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFFE6F4EA))
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                ) { Text("new", fontSize = 12.sp, color = GoGreenDark) }
+            }
+            if (profile.notes.isNotBlank()) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFFE8F0FE))
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                ) { Text(profile.notes, fontSize = 12.sp, color = Color(0xFF1967D2)) }
+            }
+        }
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(GoDivider)
+    )
+}
+
+@Composable
+private fun ProxiesTab(
+    profiles: List<Profile>,
+    proxyCheckResult: String?,
+    onCheckProxy: (Profile) -> Unit,
+    onClearNotice: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("Proxies", fontWeight = FontWeight.Bold, fontSize = 20.sp)
+        Text(
+            "Each profile can use its own HTTP or SOCKS5 proxy. " +
+                "Add one in the profile editor — no proxy is needed to browse.",
+            color = GoGreyText
+        )
+        if (profiles.isEmpty()) {
+            Text("No profiles yet.", color = GoGreyText)
+        }
+        for (p in profiles) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .border(1.dp, GoDivider, RoundedCornerShape(12.dp))
+                    .padding(12.dp)
+            ) {
+                Text(p.name, fontWeight = FontWeight.Bold)
+                Text(ProxyHelper.summary(p), color = GoGreyText)
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { onClearNotice(); onCheckProxy(p) },
+                        colors = ButtonDefaults.buttonColors(containerColor = GoGreen)
+                    ) { Text("Check proxy") }
                 }
             }
         }
+        proxyCheckResult?.let { Text(it) }
+    }
+}
+
+@Composable
+private fun SettingsTab(
+    trashCount: Int,
+    onExport: () -> Unit,
+    onImport: () -> Unit,
+    onShowTrash: () -> Unit,
+    onHideTrash: () -> Unit,
+    showTrash: Boolean,
+    onAbout: () -> Unit,
+    notice: String?
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("Settings", fontWeight = FontWeight.Bold, fontSize = 20.sp)
+        Button(
+            onClick = onExport,
+            colors = ButtonDefaults.buttonColors(containerColor = GoGreen),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Icon(Icons.Filled.FileUpload, null)
+            Spacer(Modifier.width(8.dp))
+            Text("Export all profiles (.zip)")
+        }
+        Button(
+            onClick = onImport,
+            colors = ButtonDefaults.buttonColors(containerColor = GoGreen),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Icon(Icons.Filled.FileDownload, null)
+            Spacer(Modifier.width(8.dp))
+            Text("Import profiles (.zip)")
+        }
+        Button(
+            onClick = { if (showTrash) onHideTrash() else onShowTrash() },
+            colors = ButtonDefaults.buttonColors(containerColor = GoGreen),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Icon(Icons.Filled.Delete, null)
+            Spacer(Modifier.width(8.dp))
+            Text(if (showTrash) "Hide trash" else "Trash ($trashCount)")
+        }
+        Button(
+            onClick = onAbout,
+            colors = ButtonDefaults.buttonColors(containerColor = GoGreen),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Icon(Icons.Filled.Info, null)
+            Spacer(Modifier.width(8.dp))
+            Text("About NovaProfile")
+        }
+        notice?.let { Text(it, color = GoGreyText) }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Fingerprint protection is JS-level inside the system WebView. " +
+                "It is NOT a Chromium fork — advanced fingerprint tests can " +
+                "still detect the real device.",
+            color = GoGreyText
+        )
     }
 }
 
@@ -439,12 +829,13 @@ fun EditorScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .background(Color.White)
                 .padding(padding)
                 .verticalScroll(scroll)
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text("Basic", fontWeight = FontWeight.Bold)
+            Text("Overview", fontWeight = FontWeight.Bold)
             OutlinedTextField(
                 value = draft.name, onValueChange = { draft = draft.copy(name = it) },
                 label = { Text("Name") }, modifier = Modifier.fillMaxWidth(), singleLine = true
@@ -462,7 +853,7 @@ fun EditorScreen(
                 label = { Text("Notes (optional)") }, modifier = Modifier.fillMaxWidth()
             )
 
-            Text("Identity", fontWeight = FontWeight.Bold)
+            Text("Browser", fontWeight = FontWeight.Bold)
             DropDownField(
                 "User-agent preset", Profile.USER_AGENT_PRESETS,
                 draft.userAgentPreset
