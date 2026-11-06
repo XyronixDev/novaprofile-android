@@ -317,6 +317,7 @@ fun MainScreen(vm: ProfileViewModel = viewModel()) {
                             syncingIds = syncingIds + p.id
                             scope.launch {
                                 val entry = ProxyEntry(
+                                    name = p.name,
                                     mode = p.proxyMode, host = p.proxyHost,
                                     port = p.proxyPort, user = p.proxyUser,
                                     pass = p.proxyPass
@@ -1200,7 +1201,6 @@ fun DropDownField(
     }
 }
 
-@Composable
 @Composable
 fun EditorScreen(
     initial: Profile?,
