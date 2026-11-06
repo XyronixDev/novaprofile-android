@@ -1,10 +1,12 @@
-package com.novaprofiles.app.ui
-
 // File-level opt-in (Run #5 fix): TopAppBar / ExposedDropdownMenuBox /
 // FilterChip are @ExperimentalMaterial3Api in the BOM 2026.08.00
 // material3 version — the per-function @OptIn missed EditorScreen's
 // TopAppBar (line 421), failing :app:compileReleaseKotlin.
+// NOTE (Run #7): a @file: annotation MUST sit before the package line —
+// after it, the parser rejects the imports ("imports are only allowed in
+// the beginning of file"). That was my placement mistake.
 @file:OptIn(ExperimentalMaterial3Api::class)
+package com.novaprofiles.app.ui
 
 import android.content.Intent
 import android.os.Bundle
