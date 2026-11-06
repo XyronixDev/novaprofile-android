@@ -172,29 +172,35 @@ class ProxyStore(context: Context) {
         }
 
     /**
-     * Parallel first-working test (v2.3): tests all [candidates] at once
-     * and returns the first one that actually proxies. Sequential
-     * testing was the v2.2 failure — 10s timeout per dead proxy meant
-     * the user waited ~9s, saw nothing, and saved, cancelling the job.
-     * With parallel testing + 6s check timeouts, a batch of 10 resolves
-     * in ~6–8s even when 9 of them are dead.
+     * Parallel fastest-working test (v2.3, rebuilt v2.4): tests all
+     * [candidates] at once and returns the FASTEST one that actually
+     * proxies. v2.3 stopped at the FIRST working proxy — which could be
+     * a slow one (the phone test: a Google Cloud proxy that took ~4s
+     * to load whoer). Now, once the first working proxy appears, faster
+     * ones get up to 2.5s more to finish, and the lowest-latency winner
+     * is picked. Worst case is still the 12s deadline.
      */
     suspend fun checkFirstWorking(candidates: List<ProxyEntry>): ProxyEntry? =
         withContext(Dispatchers.IO) {
             val deferreds = candidates.map { async { check(it) } }
-            var working: ProxyEntry? = null
             val deadline = System.currentTimeMillis() + 12_000
+            var firstOkAt = 0L
+            var working: ProxyEntry? = null
             while (working == null && System.currentTimeMillis() < deadline) {
-                for (d in deferreds) {
-                    if (d.isCompleted) {
-                        val r = d.await()
-                        if (r.ok) {
-                            working = r
-                            break
-                        }
+                val done = deferreds.filter { it.isCompleted }
+                    .mapNotNull { runCatching { it.await() }.getOrNull() }
+                    .filter { it.ok }
+                if (done.isNotEmpty()) {
+                    if (firstOkAt == 0L) firstOkAt = System.currentTimeMillis()
+                    if (System.currentTimeMillis() - firstOkAt >= 2_500 ||
+                        deferreds.all { it.isCompleted }
+                    ) {
+                        working = done.minByOrNull { it.lastMs }
+                        break
                     }
                 }
-                if (working == null) delay(200)
+                if (deferreds.all { it.isCompleted }) break
+                delay(200)
             }
             deferreds.forEach { it.cancel() }
             working
