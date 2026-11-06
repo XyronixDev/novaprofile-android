@@ -267,14 +267,17 @@ class BrowserActivity : ComponentActivity() {
         val wv = WebView(this)
         wv.settings.apply {
             javaScriptEnabled = true
-            domStorageEnabled = true
-            databaseEnabled = true
+            // v2.6: Storage section — local storage + IndexedDB per profile.
+            domStorageEnabled = profile.domStorage
+            databaseEnabled = profile.domStorage
             allowFileAccess = false
             allowContentAccess = true
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
             setSupportMultipleWindows(false)
             cacheMode = WebSettings.LOAD_DEFAULT
-            setGeolocationEnabled(false)
+            // v2.6: geolocation API only when the profile spoofs it from
+            // the IP; OFF blocks it natively too.
+            setGeolocationEnabled(profile.geoMode == "IP")
             userAgentString = uaFor(tab, profile)
         }
         wv.webViewClient = object : WebViewClient() {
@@ -283,7 +286,8 @@ class BrowserActivity : ComponentActivity() {
                 tab.loading = true
                 url?.let {
                     tab.url = it
-                    if (!tab.incognito) {
+                    // v2.6: Save history per profile (incognito never saves).
+                    if (!tab.incognito && profile.saveHistory) {
                         try {
                             visitedHosts.add(URL(it).host)
                         } catch (e: Exception) {
@@ -476,6 +480,8 @@ class BrowserActivity : ComponentActivity() {
                             cursorColor = Color.White
                         )
                     )
+                    // v2.6: the star only shows when this profile saves bookmarks.
+                    if (profile.saveBookmarks) {
                     IconButton(
                         onClick = {
                             if (tab.url.isBlank()) return@IconButton
@@ -490,6 +496,7 @@ class BrowserActivity : ComponentActivity() {
                             tint = if (isBookmarked) Color(0xFFFBBC04) else Color(0xFFBDC1C6),
                             modifier = Modifier.size(20.dp)
                         )
+                    }
                     }
                 }
                 IconButton(onClick = { newTab(profile) }) {
@@ -537,10 +544,12 @@ class BrowserActivity : ComponentActivity() {
                             text = { Text("New Incognito tab") },
                             onClick = { menuOpen = false; newTab(profile, incognito = true) }
                         )
-                        DropdownMenuItem(
-                            text = { Text("History") },
-                            onClick = { menuOpen = false; showHistory = true }
-                        )
+                        if (profile.saveHistory) {
+                            DropdownMenuItem(
+                                text = { Text("History") },
+                                onClick = { menuOpen = false; showHistory = true }
+                            )
+                        }
                         DropdownMenuItem(
                             text = { Text("Delete browsing data") },
                             onClick = {
@@ -569,10 +578,12 @@ class BrowserActivity : ComponentActivity() {
                             text = { Text("Bookmarks") },
                             onClick = { menuOpen = false; showBookmarks = true }
                         )
-                        DropdownMenuItem(
-                            text = { Text("Recent tabs") },
-                            onClick = { menuOpen = false; showHistory = true }
-                        )
+                        if (profile.saveHistory) {
+                            DropdownMenuItem(
+                                text = { Text("Recent tabs") },
+                                onClick = { menuOpen = false; showHistory = true }
+                            )
+                        }
                         DropdownMenuItem(
                             text = { Text("Share…") },
                             onClick = {
