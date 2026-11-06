@@ -57,6 +57,13 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
         repo.update(profile)
     }
 
+    // v2.6: suspending update — the Run-time location re-sync must land
+    // in the DB before BrowserActivity reads the profile by id, or the
+    // browser opens with the stale timezone.
+    suspend fun updateNow(profile: Profile) {
+        repo.update(profile)
+    }
+
     fun duplicate(profile: Profile) = viewModelScope.launch {
         repo.duplicate(profile)
     }
