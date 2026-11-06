@@ -71,7 +71,14 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("release")
+            // Only wire the release signing config when a keystore actually
+            // exists. Unconditional assignment fails CI with
+            // "Keystore file not set for signing config release"
+            // (validateSigningRelease, Run #4) when no keystore secret is
+            // set — CI then builds an unsigned APK for local signing.
+            if (releaseStoreFile != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
         debug {
             isMinifyEnabled = false
