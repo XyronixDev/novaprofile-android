@@ -1,5 +1,9 @@
 package com.novaprofiles.app.ui
 
+// File-level opt-in (Run #5 fix, same cause as MainActivity.kt):
+// TopAppBar and friends are @ExperimentalMaterial3Api in BOM 2026.08.00.
+@file:OptIn(ExperimentalMaterial3Api::class)
+
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
