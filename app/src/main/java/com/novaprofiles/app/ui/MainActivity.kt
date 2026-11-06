@@ -39,6 +39,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -56,6 +57,7 @@ import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -66,7 +68,9 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -213,23 +217,6 @@ fun MainScreen(vm: ProfileViewModel = viewModel()) {
         }
     }
 
-    if (editing != null || creating) {
-        EditorScreen(
-            initial = editing,
-            onSave = { p ->
-                if (editing != null) vm.update(p) else vm.create(p)
-                editing = null
-                creating = false
-            },
-            onCancel = { editing = null; creating = false },
-            onCheckProxy = { p -> vm.checkProxy(p, "https://api.ipify.org") },
-            proxyCheckResult = proxyCheck,
-            onClearNotice = { vm.clearNotices() },
-            proxyStore = proxyStore
-        )
-        return
-    }
-
     // Fingerprint Lab (v2.0 Pro) — full-screen check for one profile.
     labProfile?.let { lp ->
         FingerprintLabScreen(profile = lp, onBack = { labProfile = null })
@@ -336,7 +323,9 @@ fun MainScreen(vm: ProfileViewModel = viewModel()) {
                                 proxyHost = entry.host,
                                 proxyPort = entry.port,
                                 proxyUser = entry.user,
-                                proxyPass = entry.pass
+                                proxyPass = entry.pass,
+                                // v2.5: timezone follows the proxy's IP.
+                                timezone = entry.lastTimezone.ifBlank { p.timezone }
                             )
                         )
                     }
@@ -357,13 +346,30 @@ fun MainScreen(vm: ProfileViewModel = viewModel()) {
         }
     }
 
+    // Add/Edit profile sheet (v2.5) — overlays the home, like GoLogin.
+    if (editing != null || creating) {
+        EditorScreen(
+            initial = editing,
+            onSave = { p ->
+                if (editing != null) vm.update(p) else vm.create(p)
+                editing = null
+                creating = false
+            },
+            onCancel = { editing = null; creating = false },
+            onCheckProxy = { p -> vm.checkProxy(p, "https://api.ipify.org") },
+            proxyCheckResult = proxyCheck,
+            onClearNotice = { vm.clearNotices() },
+            proxyStore = proxyStore
+        )
+    }
+
     if (showAbout) {
         AlertDialog(
             onDismissRequest = { showAbout = false },
             title = { Text("About NovaProfile") },
             text = {
                 Text(
-                    "NovaProfile 2.0.0 Pro — original multi-profile browser.\n\n" +
+                    "NovaProfile 2.5.0 Pro — original multi-profile browser.\n\n" +
                         "• Unlimited profiles, everything free, no billing, no trial.\n" +
                         "• Per-profile cookies, proxy, user-agent, language, " +
                         "screen, WebGL and Canvas settings.\n" +
@@ -429,6 +435,7 @@ private fun BottomNavItem(
         Text(
             label,
             fontSize = 11.sp,
+            maxLines = 1,
             color = if (selected) GoGreen else GoGreyText,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
         )
@@ -787,6 +794,12 @@ private fun ProxiesTab(
     var newUser by remember { mutableStateOf("") }
     var newPass by remember { mutableStateOf("") }
     var formError by remember { mutableStateOf<String?>(null) }
+    // v2.5: country picker state (GoLogin-style Add proxy).
+    var showManual by remember { mutableStateOf(false) }
+    var pickingCountry by remember { mutableStateOf<String?>(null) }
+    var pickingBusy by remember { mutableStateOf(false) }
+    var pickedProxy by remember { mutableStateOf<ProxyEntry?>(null) }
+    var pickingError by remember { mutableStateOf<String?>(null) }
 
     Column(
         modifier = Modifier
@@ -801,7 +814,103 @@ private fun ProxiesTab(
             color = GoGreyText
         )
 
+        // Country picker (v2.5, GoLogin-style Add proxy): tap a country,
+        // the app fetches + tests free proxies for it and shows
+        // "Proxy is ok!" — no manual host/port form on screen.
+        Text("Add proxy", fontWeight = FontWeight.Bold)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .border(1.dp, GoDivider, RoundedCornerShape(12.dp))
+        ) {
+            for (code in Profile.pickerCountries) {
+                val cs = Profile.countrySettings(code)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = !pickingBusy) {
+                            pickingCountry = code
+                            pickedProxy = null
+                            pickingError = null
+                            pickingBusy = true
+                            scope.launch {
+                                val candidates = proxyStore.fetchFreeProxies(code, limit = 10)
+                                val working = if (candidates.isEmpty()) null
+                                else proxyStore.checkFirstWorking(candidates)
+                                if (working != null) {
+                                    pickedProxy = working
+                                } else {
+                                    pickingError =
+                                        "No working free ${cs.label} proxy right now — try again."
+                                }
+                                pickingBusy = false
+                            }
+                        }
+                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(Profile.flagEmoji(code), fontSize = 20.sp)
+                    Spacer(Modifier.width(12.dp))
+                    Text(cs.label, modifier = Modifier.weight(1f))
+                    Icon(
+                        Icons.Filled.ChevronRight,
+                        contentDescription = null,
+                        tint = GoGreyText
+                    )
+                }
+            }
+        }
+        // Selected-proxy card (GoLogin's "Proxy is ok!" sheet, inline).
+        pickingCountry?.let { code ->
+            val cs = Profile.countrySettings(code)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .border(1.dp, GoDivider, RoundedCornerShape(12.dp))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    "Selected proxy: ${Profile.flagEmoji(code)} ${cs.label} • Free",
+                    fontWeight = FontWeight.Bold
+                )
+                if (pickingBusy) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Checking…", color = GoGreyText)
+                    }
+                } else if (pickedProxy != null) {
+                    val wp = pickedProxy!!
+                    Text("HTTP", color = GoGreyText)
+                    Text(
+                        "Proxy is ok! • ${wp.lastIp} • ${wp.lastMs} ms" +
+                            (if (wp.lastTimezone.isNotBlank()) " • ${wp.lastTimezone}" else ""),
+                        color = GoGreenDark,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Button(
+                        onClick = {
+                            proxyStore.add(wp)
+                            pickingCountry = null
+                            pickedProxy = null
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = GoGreen),
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Add proxy") }
+                } else {
+                    pickingError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                }
+            }
+        }
+        // Manual add stays, but hidden behind one small link (v2.5).
+        TextButton(onClick = { showManual = !showManual }) {
+            Text(if (showManual) "Hide manual add" else "Add proxy manually")
+        }
         // Add-proxy form.
+        if (showManual) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -868,33 +977,7 @@ private fun ProxiesTab(
                 colors = ButtonDefaults.buttonColors(containerColor = GoGreen)
             ) { Text("Save proxy") }
         }
-
-        // Free US proxies (v2.1): one tap fetches a few public US proxies
-        // to test — free ones are best-effort, Test before use.
-        var fetchingFree by remember { mutableStateOf(false) }
-        var freeNotice by remember { mutableStateOf<String?>(null) }
-        Button(
-            onClick = {
-                fetchingFree = true
-                freeNotice = null
-                scope.launch {
-                    val found = proxyStore.fetchFreeProxies("US")
-                    if (found.isEmpty()) {
-                        freeNotice = "No free proxies fetched — check your connection and try again."
-                    } else {
-                        for (p in found) proxyStore.add(p)
-                        freeNotice = "${found.size} free US proxies added — Test each before use."
-                    }
-                    fetchingFree = false
-                }
-            },
-            enabled = !fetchingFree,
-            colors = ButtonDefaults.buttonColors(containerColor = GoGreen),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(if (fetchingFree) "Fetching free proxies…" else "Get free US proxies")
         }
-        freeNotice?.let { Text(it, color = GoGreyText) }
 
         // Saved proxies.
         if (savedProxies.isEmpty()) {
@@ -932,6 +1015,7 @@ private fun ProxiesTab(
                     Text(
                         "IP ${entry.lastIp}" +
                             (if (entry.country.isNotBlank()) " • ${entry.country}" else "") +
+                            (if (entry.lastTimezone.isNotBlank()) " • ${entry.lastTimezone}" else "") +
                             " • ${entry.lastMs} ms",
                         color = GoGreyText
                     )
@@ -1147,28 +1231,24 @@ fun EditorScreen(
     var showAdvanced by remember { mutableStateOf(false) }
     val scroll = rememberScrollState()
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(if (initial == null) "New profile" else "Edit profile") },
-                navigationIcon = {
-                    IconButton(onClick = onCancel) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                }
-            )
-        }
-    ) { padding ->
+    // v2.5: GoLogin-style bottom sheet instead of a full-screen form.
+    ModalBottomSheet(
+        onDismissRequest = onCancel,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ) {
         Column(
             modifier = Modifier
-                .fillMaxSize()
+                .fillMaxWidth()
                 .background(Color.White)
-                .padding(padding)
                 .verticalScroll(scroll)
-                .padding(12.dp),
+                .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text("Overview", fontWeight = FontWeight.Bold)
+            Text(
+                if (initial == null) "Add profile" else "Edit profile",
+                fontWeight = FontWeight.Bold,
+                fontSize = 20.sp
+            )
             // Templates (v2.0 Pro): one tap fills the identity below.
             Text("Template", style = MaterialTheme.typography.labelLarge, color = GoGreyText)
             Row(
@@ -1311,7 +1391,11 @@ fun EditorScreen(
                                             proxyPort = working.port,
                                             proxyUser = "",
                                             proxyPass = "",
-                                            timezone = cs.timezone,
+                                            // v2.5: the IP's own timezone wins
+                                            // (Seattle IP = Los Angeles zone,
+                                            // not the country default New York).
+                                            timezone = working.lastTimezone
+                                                .ifBlank { cs.timezone },
                                             language = cs.language
                                         )
                                         countryStatus =
@@ -1335,7 +1419,7 @@ fun EditorScreen(
             }
             countryStatus?.let { Text(it, color = GoGreyText) }
             TextButton(onClick = { showAdvanced = !showAdvanced }) {
-                Text(if (showAdvanced) "Hide advanced settings" else "Advanced settings")
+                Text(if (showAdvanced) "Hide extended settings" else "Extended settings")
             }
             if (showAdvanced) {
             DropDownField(
@@ -1419,8 +1503,14 @@ fun EditorScreen(
                     // running — saving early used to cancel the job, which
                     // is exactly how v2.2 lost the proxy on the phone.
                     enabled = connectingCountry == null,
+                    colors = ButtonDefaults.buttonColors(containerColor = GoGreen),
                     modifier = Modifier.weight(1f)
-                ) { Text(if (connectingCountry == null) "Save profile" else "Connecting ${connectingCountry}…") }
+                ) {
+                    Text(
+                        if (connectingCountry != null) "Connecting ${connectingCountry}…"
+                        else if (initial == null) "Add profile" else "Save profile"
+                    )
+                }
                 TextButton(onClick = onCancel) { Text("Cancel") }
             }
             Spacer(Modifier.height(24.dp))
