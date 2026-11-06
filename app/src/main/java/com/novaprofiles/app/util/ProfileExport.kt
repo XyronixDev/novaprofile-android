@@ -45,6 +45,18 @@ object ProfileExport {
         put("webrtcMode", p.webrtcMode)
         put("fontsMasking", p.fontsMasking)
         put("doNotTrack", p.doNotTrack)
+        // v2.6: Extended settings.
+        put("os", p.os)
+        put("timezoneMode", p.timezoneMode)
+        put("geoMode", p.geoMode)
+        put("languagesMode", p.languagesMode)
+        put("fontsList", p.fontsList)
+        put("webglMode", p.webglMode)
+        put("audioMode", p.audioMode)
+        put("mediaMasked", p.mediaMasked)
+        put("saveHistory", p.saveHistory)
+        put("saveBookmarks", p.saveBookmarks)
+        put("domStorage", p.domStorage)
         put("notes", p.notes)
         put("cookiesData", p.cookiesData)
     }
@@ -75,6 +87,18 @@ object ProfileExport {
         webrtcMode = o.optString("webrtcMode", "disable"),
         fontsMasking = o.optBoolean("fontsMasking", true),
         doNotTrack = o.optBoolean("doNotTrack", true),
+        // v2.6: Extended settings.
+        os = o.optString("os", "Android"),
+        timezoneMode = o.optString("timezoneMode", "IP"),
+        geoMode = o.optString("geoMode", "IP"),
+        languagesMode = o.optString("languagesMode", "IP"),
+        fontsList = o.optString("fontsList", "Arial,Courier,Georgia,Helvetica,Monaco,Palatino,Tahoma,Times,Times New Roman,Verdana"),
+        webglMode = o.optString("webglMode", "MASKED"),
+        audioMode = o.optString("audioMode", "MASKED"),
+        mediaMasked = o.optBoolean("mediaMasked", true),
+        saveHistory = o.optBoolean("saveHistory", true),
+        saveBookmarks = o.optBoolean("saveBookmarks", true),
+        domStorage = o.optBoolean("domStorage", true),
         notes = o.optString("notes", ""),
         cookiesData = o.optString("cookiesData", "")
     )
