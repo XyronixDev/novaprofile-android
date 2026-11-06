@@ -101,6 +101,43 @@ class ProxyStore(context: Context) {
         persist(_proxies.value.map { if (it.id == entry.id) entry else it })
     }
 
+    /**
+     * Free proxies (v2.1): fetches a few public US HTTP proxies so the user
+     * can test a foreign IP without buying one. Free proxies are
+     * best-effort — most are dead or slow, which is why every entry must
+     * be Tested before use. Primary: ProxyScrape free API (US only);
+     * fallback: a public GitHub proxy list (any country).
+     */
+    suspend fun fetchFreeProxies(country: String = "US"): List<ProxyEntry> =
+        withContext(Dispatchers.IO) {
+            val lines = try {
+                URL(
+                    "https://api.proxyscrape.com/v2/?request=getproxies" +
+                        "&protocol=http&timeout=5000&country=$country" +
+                        "&ssl=all&anonymity=elite,anonymous"
+                ).readText().lines()
+            } catch (e: Exception) {
+                emptyList()
+            }.filter { it.contains(":") }
+            val source = if (lines.isNotEmpty()) lines else try {
+                URL("https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt")
+                    .readText().lines().filter { it.contains(":") }
+            } catch (e: Exception) {
+                emptyList()
+            }
+            source.take(5).mapIndexedNotNull { i, line ->
+                val parts = line.trim().split(":")
+                if (parts.size < 2) return@mapIndexedNotNull null
+                val port = parts[1].toIntOrNull() ?: return@mapIndexedNotNull null
+                ProxyEntry(
+                    name = "Free ${country.uppercase()} ${i + 1}",
+                    mode = "HTTP",
+                    host = parts[0],
+                    port = port
+                )
+            }
+        }
+
     /** Live check through the proxy. Returns the entry with fresh results. */
     suspend fun check(entry: ProxyEntry): ProxyEntry = withContext(Dispatchers.IO) {
         val started = System.currentTimeMillis()
