@@ -482,6 +482,11 @@ private fun ProfilesTab(
                 fontSize = 20.sp,
                 modifier = Modifier.weight(1f)
             )
+            // v2.3: GoLogin shows "Connected" up here when a profile runs.
+            if (runningIds.isNotEmpty()) {
+                Text("Connected", color = GoGreyText, fontSize = 14.sp)
+                Spacer(Modifier.width(8.dp))
+            }
             IconButton(onClick = { onSearchOpen(!searchOpen) }) {
                 Icon(Icons.Filled.Search, contentDescription = "Search", tint = Color.Black)
             }
@@ -1136,6 +1141,10 @@ fun EditorScreen(
     var draft by remember { mutableStateOf(initial ?: Profile.new("Profile 1")) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    // v2.3: GoLogin-simple editor — only Name, Template and the one-tap
+    // country proxy show by default; everything technical hides behind
+    // "Advanced settings" so creating a profile is one screen, not a form.
+    var showAdvanced by remember { mutableStateOf(false) }
     val scroll = rememberScrollState()
 
     Scaffold(
@@ -1202,6 +1211,7 @@ fun EditorScreen(
                 label = { Text("Notes (optional)") }, modifier = Modifier.fillMaxWidth()
             )
 
+            if (showAdvanced) {
             Text("Browser", fontWeight = FontWeight.Bold)
             DropDownField(
                 "User-agent preset", Profile.USER_AGENT_PRESETS,
@@ -1253,6 +1263,7 @@ fun EditorScreen(
                     modifier = Modifier.weight(1f), singleLine = true
                 )
             }
+            }
 
             Text("Proxy", fontWeight = FontWeight.Bold)
             // One-tap country proxy (v2.2): one tap fetches free proxies
@@ -1278,36 +1289,41 @@ fun EditorScreen(
                         enabled = connectingCountry == null,
                         onClick = {
                             connectingCountry = code
-                            countryStatus = null
+                            countryStatus = "Fetching $code proxies…"
                             scope.launch {
-                                val candidates = proxyStore.fetchFreeProxies(code)
-                                var working: ProxyEntry? = null
-                                for (c in candidates.take(5)) {
-                                    val checked = proxyStore.check(c)
-                                    if (checked.ok) {
-                                        working = checked
-                                        break
-                                    }
-                                }
-                                if (working != null) {
-                                    proxyStore.add(working)
-                                    draft = draft.copy(
-                                        proxyMode = working.mode,
-                                        proxyHost = working.host,
-                                        proxyPort = working.port,
-                                        proxyUser = "",
-                                        proxyPass = "",
-                                        timezone = cs.timezone,
-                                        language = cs.language
-                                    )
+                                // v2.3: fetch from 3 merged sources, test
+                                // 10 in PARALLEL — first working one wins
+                                // in ~6–8s instead of 100s sequential.
+                                val candidates = proxyStore.fetchFreeProxies(code, limit = 10)
+                                if (candidates.isEmpty()) {
                                     countryStatus =
-                                        "${cs.label} connected • ${working.lastIp} — " +
-                                            "timezone + language auto-matched. " +
-                                            "Save the profile to apply."
+                                        "Could not fetch any free $code proxies — " +
+                                            "check connection and try again."
                                 } else {
                                     countryStatus =
-                                        "No working free $code proxy found — try again " +
-                                            "in a minute, or add your own proxy below."
+                                        "Testing ${candidates.size} $code proxies…"
+                                    val working = proxyStore.checkFirstWorking(candidates)
+                                    if (working != null) {
+                                        proxyStore.add(working)
+                                        draft = draft.copy(
+                                            proxyMode = working.mode,
+                                            proxyHost = working.host,
+                                            proxyPort = working.port,
+                                            proxyUser = "",
+                                            proxyPass = "",
+                                            timezone = cs.timezone,
+                                            language = cs.language
+                                        )
+                                        countryStatus =
+                                            "${cs.label} connected • ${working.lastIp} — " +
+                                                "timezone + language auto-matched. " +
+                                                "Save the profile to apply."
+                                    } else {
+                                        countryStatus =
+                                            "No working free $code proxy right now — " +
+                                                "free proxies die fast. Try again, " +
+                                                "or add your own proxy below."
+                                    }
                                 }
                                 connectingCountry = null
                             }
@@ -1317,6 +1333,10 @@ fun EditorScreen(
                 }
             }
             countryStatus?.let { Text(it, color = GoGreyText) }
+            TextButton(onClick = { showAdvanced = !showAdvanced }) {
+                Text(if (showAdvanced) "Hide advanced settings" else "Advanced settings")
+            }
+            if (showAdvanced) {
             DropDownField(
                 "Proxy mode", listOf("NONE", "HTTP", "SOCKS5"), draft.proxyMode
             ) { draft = draft.copy(proxyMode = it) }
@@ -1347,7 +1367,9 @@ fun EditorScreen(
                 }
                 proxyCheckResult?.let { Text(it) }
             }
+            }
 
+            if (showAdvanced) {
             Text("Fingerprint (JS-level)", fontWeight = FontWeight.Bold)
             DropDownField(
                 "Canvas", listOf("noise", "off"), draft.canvasMode
@@ -1376,6 +1398,7 @@ fun EditorScreen(
                     onCheckedChange = { draft = draft.copy(doNotTrack = it) }
                 )
             }
+            }
 
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
@@ -1391,8 +1414,12 @@ fun EditorScreen(
                             else -> onSave(draft)
                         }
                     },
+                    // v2.3: Save stays locked while a one-tap connect is
+                    // running — saving early used to cancel the job, which
+                    // is exactly how v2.2 lost the proxy on the phone.
+                    enabled = connectingCountry == null,
                     modifier = Modifier.weight(1f)
-                ) { Text("Save profile") }
+                ) { Text(if (connectingCountry == null) "Save profile" else "Connecting ${connectingCountry}…") }
                 TextButton(onClick = onCancel) { Text("Cancel") }
             }
             Spacer(Modifier.height(24.dp))
