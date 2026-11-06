@@ -74,6 +74,19 @@ data class Profile(
     val lastRunAt: Long = 0,
     val deletedAt: Long? = null
 ) {
+    // v2.2: one-tap country proxy — timezone + language that match the
+    // country, so a leak-check site sees ONE identity (IP country =
+    // timezone = language). WebRTC is already "disable" by default, so
+    // no real-IP leak through the proxy. (Moved out of the companion in
+    // v2.6 so the type is addressable as Profile.CountrySettings —
+    // companion-nested types are not.)
+    data class CountrySettings(
+        val code: String,
+        val label: String,
+        val timezone: String,
+        val language: String
+    )
+
     companion object {
         val USER_AGENT_PRESETS = listOf(
             "Chrome Android",
@@ -101,17 +114,6 @@ data class Profile(
         }
 
         fun new(name: String): Profile = Profile(name = name.ifBlank { "Profile 1" })
-
-        // v2.2: one-tap country proxy — timezone + language that match the
-        // country, so a leak-check site sees ONE identity (IP country =
-        // timezone = language). WebRTC is already "disable" by default, so
-        // no real-IP leak through the proxy.
-        data class CountrySettings(
-            val code: String,
-            val label: String,
-            val timezone: String,
-            val language: String
-        )
 
         val oneTapCountries = listOf("US", "GB", "CA", "AU", "FR", "DE", "NL", "JP")
 
