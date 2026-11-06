@@ -224,7 +224,8 @@ fun MainScreen(vm: ProfileViewModel = viewModel()) {
             onCancel = { editing = null; creating = false },
             onCheckProxy = { p -> vm.checkProxy(p, "https://api.ipify.org") },
             proxyCheckResult = proxyCheck,
-            onClearNotice = { vm.clearNotices() }
+            onClearNotice = { vm.clearNotices() },
+            proxyStore = proxyStore
         )
         return
     }
@@ -1129,10 +1130,12 @@ fun EditorScreen(
     onCancel: () -> Unit,
     onCheckProxy: (Profile) -> Unit,
     proxyCheckResult: String?,
-    onClearNotice: () -> Unit
+    onClearNotice: () -> Unit,
+    proxyStore: ProxyStore
 ) {
     var draft by remember { mutableStateOf(initial ?: Profile.new("Profile 1")) }
     var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
     val scroll = rememberScrollState()
 
     Scaffold(
@@ -1252,6 +1255,68 @@ fun EditorScreen(
             }
 
             Text("Proxy", fontWeight = FontWeight.Bold)
+            // One-tap country proxy (v2.2): one tap fetches free proxies
+            // for that country, tests them, assigns the first working one
+            // AND matches the profile's timezone + language to the
+            // country — so whoer.net sees one consistent identity.
+            Text(
+                "One-tap country proxy — 1 click connects",
+                style = MaterialTheme.typography.labelLarge, color = GoGreyText
+            )
+            var connectingCountry by remember { mutableStateOf<String?>(null) }
+            var countryStatus by remember { mutableStateOf<String?>(null) }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                for (code in Profile.oneTapCountries) {
+                    val cs = Profile.countrySettings(code)
+                    FilterChip(
+                        selected = false,
+                        enabled = connectingCountry == null,
+                        onClick = {
+                            connectingCountry = code
+                            countryStatus = null
+                            scope.launch {
+                                val candidates = proxyStore.fetchFreeProxies(code)
+                                var working: ProxyEntry? = null
+                                for (c in candidates.take(5)) {
+                                    val checked = proxyStore.check(c)
+                                    if (checked.lastCheckOk) {
+                                        working = checked
+                                        break
+                                    }
+                                }
+                                if (working != null) {
+                                    proxyStore.add(working)
+                                    draft = draft.copy(
+                                        proxyMode = working.mode,
+                                        proxyHost = working.host,
+                                        proxyPort = working.port,
+                                        proxyUser = "",
+                                        proxyPass = "",
+                                        timezone = cs.timezone,
+                                        language = cs.language
+                                    )
+                                    countryStatus =
+                                        "${cs.label} connected • ${working.ip ?: ""} — " +
+                                            "timezone + language auto-matched. " +
+                                            "Save the profile to apply."
+                                } else {
+                                    countryStatus =
+                                        "No working free $code proxy found — try again " +
+                                            "in a minute, or add your own proxy below."
+                                }
+                                connectingCountry = null
+                            }
+                        },
+                        label = { Text(if (connectingCountry == code) "$code…" else code) }
+                    )
+                }
+            }
+            countryStatus?.let { Text(it, color = GoGreyText) }
             DropDownField(
                 "Proxy mode", listOf("NONE", "HTTP", "SOCKS5"), draft.proxyMode
             ) { draft = draft.copy(proxyMode = it) }
