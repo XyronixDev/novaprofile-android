@@ -69,10 +69,12 @@ data class Profile(
             "Custom"
         )
 
+        // v2.1: Chrome 151 (matches Orbita's Chromium 151, so leak-check
+        // sites report "Chrome 151" instead of the system WebView's 126).
         fun defaultUserAgent(preset: String): String = when (preset) {
             "Chrome Desktop" ->
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-                    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+                    "(KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
             "Firefox Android" ->
                 "Mozilla/5.0 (Android 14; Mobile; rv:126.0) Gecko/126.0 Firefox/126.0"
             "Safari iOS" ->
@@ -81,7 +83,7 @@ data class Profile(
                     "Mobile/15E148 Safari/604.1"
             else ->
                 "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 " +
-                    "(KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36"
+                    "(KHTML, like Gecko) Chrome/151.0.0.0 Mobile Safari/537.36"
         }
 
         fun new(name: String): Profile = Profile(name = name.ifBlank { "Profile 1" })
