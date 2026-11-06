@@ -83,12 +83,21 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+    // NOTE (AGP 9): android.kotlinOptions {} does NOT exist under AGP 9's
+    // built-in Kotlin (Run #3 failed on it as an unresolved reference).
+    // JVM target is set in the top-level kotlin {} block below instead.
 
     buildFeatures {
         compose = true
+    }
+}
+
+// JVM target for Kotlin compilation (AGP 9 built-in Kotlin: the
+// top-level kotlin {} extension is available without applying any
+// Kotlin plugin; kotlinOptions inside android {} is gone in AGP 9).
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
 
