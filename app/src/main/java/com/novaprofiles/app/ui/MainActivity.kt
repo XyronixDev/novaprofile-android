@@ -57,6 +57,7 @@ import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -85,6 +86,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import com.novaprofiles.app.util.ProxyEntry
 import com.novaprofiles.app.util.ProxyStore
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -184,9 +186,12 @@ fun MainScreen(vm: ProfileViewModel = viewModel()) {
     var pendingDelete by remember { mutableStateOf<Profile?>(null) }
     var tab by remember { mutableStateOf(HomeTab.PROFILES) }
     var runningIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    // v2.6: profiles whose proxy location is being re-synced before launch.
+    var syncingIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var searchOpen by remember { mutableStateOf(false) }
     var labProfile by remember { mutableStateOf<Profile?>(null) }
     val proxyStore = remember { ProxyStore(ctx) }
+    val scope = rememberCoroutineScope()
 
     /** Sessions (v2.0 Pro): tell a running browser to stop itself. */
     fun stopProfile(id: Long?) {
@@ -295,10 +300,57 @@ fun MainScreen(vm: ProfileViewModel = viewModel()) {
                     searchOpen = searchOpen,
                     onSearchOpen = { searchOpen = it },
                     runningIds = runningIds,
+                    syncingIds = syncingIds,
                     onRun = { p ->
-                        runningIds = runningIds + p.id
-                        vm.markRun(p.id)
-                        ctx.startActivity(BrowserActivity.intent(ctx, p.id))
+                        // v2.6 smart 90% fix: before opening the browser,
+                        // re-resolve the proxy IP's CURRENT timezone +
+                        // coordinates (one ip-api call through the proxy)
+                        // and save them, so the run never uses a stale
+                        // timezone. Free US proxies sit in Mountain View
+                        // (America/Los_Angeles) while the country default
+                        // is New York — a 3-hour mismatch whoer deducts
+                        // for. On lookup failure, launch with the stored
+                        // values instead of blocking.
+                        if (p.proxyMode != "NONE" &&
+                            (p.timezoneMode == "IP" || p.geoMode == "IP")
+                        ) {
+                            syncingIds = syncingIds + p.id
+                            scope.launch {
+                                val entry = ProxyEntry(
+                                    mode = p.proxyMode, host = p.proxyHost,
+                                    port = p.proxyPort, user = p.proxyUser,
+                                    pass = p.proxyPass
+                                )
+                                val loc = proxyStore.resolveLocation(entry)
+                                if (loc != null) {
+                                    val updated = p.copy(
+                                        timezone = if (p.timezoneMode == "IP") loc.timezone else p.timezone,
+                                        latitude = if (p.geoMode == "IP" && loc.lat != 0.0) loc.lat else p.latitude,
+                                        longitude = if (p.geoMode == "IP" && loc.lon != 0.0) loc.lon else p.longitude
+                                    )
+                                    vm.updateNow(updated)
+                                    val saved = proxyStore.proxies.value.firstOrNull {
+                                        it.host == p.proxyHost && it.port == p.proxyPort
+                                    }
+                                    if (saved != null) {
+                                        proxyStore.update(
+                                            saved.copy(
+                                                lastIp = loc.ip, lastTimezone = loc.timezone,
+                                                lastLat = loc.lat, lastLon = loc.lon, ok = true
+                                            )
+                                        )
+                                    }
+                                }
+                                syncingIds = syncingIds - p.id
+                                runningIds = runningIds + p.id
+                                vm.markRun(p.id)
+                                ctx.startActivity(BrowserActivity.intent(ctx, p.id))
+                            }
+                        } else {
+                            runningIds = runningIds + p.id
+                            vm.markRun(p.id)
+                            ctx.startActivity(BrowserActivity.intent(ctx, p.id))
+                        }
                     },
                     onStop = { p -> stopProfile(p.id) },
                     onStopAll = { stopProfile(null) },
@@ -317,6 +369,12 @@ fun MainScreen(vm: ProfileViewModel = viewModel()) {
                     onCheckProxy = { p -> vm.checkProxy(p, "https://api.ipify.org") },
                     onClearNotice = { vm.clearNotices() },
                     onAssignProxy = { entry, p ->
+                        // v2.5/v2.6: timezone + language + coordinates
+                        // follow the proxy's IP — but only when the
+                        // profile's modes say IP-based; Custom keeps
+                        // the user's own values.
+                        val code = entry.country.substringBefore(" •").trim()
+                        val cs = if (code.length == 2) Profile.countrySettings(code) else null
                         vm.update(
                             p.copy(
                                 proxyMode = entry.mode,
@@ -324,8 +382,14 @@ fun MainScreen(vm: ProfileViewModel = viewModel()) {
                                 proxyPort = entry.port,
                                 proxyUser = entry.user,
                                 proxyPass = entry.pass,
-                                // v2.5: timezone follows the proxy's IP.
-                                timezone = entry.lastTimezone.ifBlank { p.timezone }
+                                timezone = if (p.timezoneMode == "IP")
+                                    entry.lastTimezone.ifBlank { p.timezone } else p.timezone,
+                                language = if (p.languagesMode == "IP" && cs != null)
+                                    cs.language else p.language,
+                                latitude = if (p.geoMode == "IP" && entry.lastLat != 0.0)
+                                    entry.lastLat else p.latitude,
+                                longitude = if (p.geoMode == "IP" && entry.lastLon != 0.0)
+                                    entry.lastLon else p.longitude
                             )
                         )
                     }
@@ -417,7 +481,7 @@ private fun BottomNavItem(
         modifier = Modifier
             .clip(RoundedCornerShape(20.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 4.dp),
+            .padding(horizontal = 8.dp, vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
@@ -434,7 +498,7 @@ private fun BottomNavItem(
         }
         Text(
             label,
-            fontSize = 11.sp,
+            fontSize = 10.sp,
             maxLines = 1,
             color = if (selected) GoGreen else GoGreyText,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
@@ -454,6 +518,7 @@ private fun ProfilesTab(
     searchOpen: Boolean,
     onSearchOpen: (Boolean) -> Unit,
     runningIds: Set<Long>,
+    syncingIds: Set<Long> = emptySet(),
     onRun: (Profile) -> Unit,
     onStop: (Profile) -> Unit,
     onStopAll: () -> Unit,
@@ -600,6 +665,7 @@ private fun ProfilesTab(
                         profile = p,
                         inTrash = showTrash,
                         running = runningIds.contains(p.id),
+                        syncing = syncingIds.contains(p.id),
                         onRun = { onRun(p) },
                         onStop = { onStop(p) },
                         onEdit = { onEdit(p) },
@@ -620,6 +686,7 @@ private fun GoProfileRow(
     profile: Profile,
     inTrash: Boolean,
     running: Boolean,
+    syncing: Boolean = false,
     onRun: () -> Unit,
     onStop: () -> Unit,
     onEdit: () -> Unit,
@@ -684,6 +751,21 @@ private fun GoProfileRow(
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(Icons.Filled.Stop, null, tint = Color.White, modifier = Modifier.size(22.dp))
+                    }
+                } else if (syncing) {
+                    // v2.6: location re-sync in progress — spinner, no double tap.
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .border(1.5.dp, GoGreen, CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            color = GoGreen,
+                            strokeWidth = 2.dp
+                        )
                     }
                 } else {
                     Box(
@@ -794,12 +876,9 @@ private fun ProxiesTab(
     var newUser by remember { mutableStateOf("") }
     var newPass by remember { mutableStateOf("") }
     var formError by remember { mutableStateOf<String?>(null) }
-    // v2.5: country picker state (GoLogin-style Add proxy).
+    // v2.6: the country picker moved into Add profile (user order) —
+    // this tab keeps only saved proxies + manual add.
     var showManual by remember { mutableStateOf(false) }
-    var pickingCountry by remember { mutableStateOf<String?>(null) }
-    var pickingBusy by remember { mutableStateOf(false) }
-    var pickedProxy by remember { mutableStateOf<ProxyEntry?>(null) }
-    var pickingError by remember { mutableStateOf<String?>(null) }
 
     Column(
         modifier = Modifier
@@ -814,97 +893,6 @@ private fun ProxiesTab(
             color = GoGreyText
         )
 
-        // Country picker (v2.5, GoLogin-style Add proxy): tap a country,
-        // the app fetches + tests free proxies for it and shows
-        // "Proxy is ok!" — no manual host/port form on screen.
-        Text("Add proxy", fontWeight = FontWeight.Bold)
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .border(1.dp, GoDivider, RoundedCornerShape(12.dp))
-        ) {
-            for (code in Profile.pickerCountries) {
-                val cs = Profile.countrySettings(code)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(enabled = !pickingBusy) {
-                            pickingCountry = code
-                            pickedProxy = null
-                            pickingError = null
-                            pickingBusy = true
-                            scope.launch {
-                                val candidates = proxyStore.fetchFreeProxies(code, limit = 10)
-                                val working = if (candidates.isEmpty()) null
-                                else proxyStore.checkFirstWorking(candidates)
-                                if (working != null) {
-                                    pickedProxy = working
-                                } else {
-                                    pickingError =
-                                        "No working free ${cs.label} proxy right now — try again."
-                                }
-                                pickingBusy = false
-                            }
-                        }
-                        .padding(horizontal = 12.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(Profile.flagEmoji(code), fontSize = 20.sp)
-                    Spacer(Modifier.width(12.dp))
-                    Text(cs.label, modifier = Modifier.weight(1f))
-                    Icon(
-                        Icons.Filled.ChevronRight,
-                        contentDescription = null,
-                        tint = GoGreyText
-                    )
-                }
-            }
-        }
-        // Selected-proxy card (GoLogin's "Proxy is ok!" sheet, inline).
-        pickingCountry?.let { code ->
-            val cs = Profile.countrySettings(code)
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .border(1.dp, GoDivider, RoundedCornerShape(12.dp))
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    "Selected proxy: ${Profile.flagEmoji(code)} ${cs.label} • Free",
-                    fontWeight = FontWeight.Bold
-                )
-                if (pickingBusy) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(modifier = Modifier.size(20.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Checking…", color = GoGreyText)
-                    }
-                } else if (pickedProxy != null) {
-                    val wp = pickedProxy!!
-                    Text("HTTP", color = GoGreyText)
-                    Text(
-                        "Proxy is ok! • ${wp.lastIp} • ${wp.lastMs} ms" +
-                            (if (wp.lastTimezone.isNotBlank()) " • ${wp.lastTimezone}" else ""),
-                        color = GoGreenDark,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Button(
-                        onClick = {
-                            proxyStore.add(wp)
-                            pickingCountry = null
-                            pickedProxy = null
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = GoGreen),
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text("Add proxy") }
-                } else {
-                    pickingError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                }
-            }
-        }
         // Manual add stays, but hidden behind one small link (v2.5).
         TextButton(onClick = { showManual = !showManual }) {
             Text(if (showManual) "Hide manual add" else "Add proxy manually")
@@ -1213,6 +1201,7 @@ fun DropDownField(
 }
 
 @Composable
+@Composable
 fun EditorScreen(
     initial: Profile?,
     onSave: (Profile) -> Unit,
@@ -1225,11 +1214,13 @@ fun EditorScreen(
     var draft by remember { mutableStateOf(initial ?: Profile.new("Profile 1")) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    // v2.3: GoLogin-simple editor — only Name, Template and the one-tap
-    // country proxy show by default; everything technical hides behind
-    // "Advanced settings" so creating a profile is one screen, not a form.
-    var showAdvanced by remember { mutableStateOf(false) }
     val scroll = rememberScrollState()
+    // v2.6: sheet views — main form, country proxy picker (moved here
+    // from the Proxies tab, user order), extended-settings section.
+    var proxyPickerOpen by remember { mutableStateOf(false) }
+    var extSection by remember { mutableStateOf<String?>(null) }
+    var connectingCountry by remember { mutableStateOf<String?>(null) }
+    var countryStatus by remember { mutableStateOf<String?>(null) }
 
     // v2.5: GoLogin-style bottom sheet instead of a full-screen form.
     ModalBottomSheet(
@@ -1244,276 +1235,643 @@ fun EditorScreen(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            when {
+                proxyPickerOpen -> ProxyPickerView(
+                    proxyStore = proxyStore,
+                    scope = scope,
+                    connectingCountry = connectingCountry,
+                    onConnectingCountry = { connectingCountry = it },
+                    countryStatus = countryStatus,
+                    onCountryStatus = { countryStatus = it },
+                    onPicked = { working, cs ->
+                        proxyStore.add(working)
+                        draft = draft.copy(
+                            proxyMode = working.mode,
+                            proxyHost = working.host,
+                            proxyPort = working.port,
+                            proxyUser = "",
+                            proxyPass = "",
+                            // v2.5/v2.6: timezone + language + coordinates
+                            // follow the proxy's IP — but only when the
+                            // profile's modes say IP-based.
+                            timezone = if (draft.timezoneMode == "IP") working.lastTimezone.ifBlank { cs.timezone } else draft.timezone,
+                            language = if (draft.languagesMode == "IP") cs.language else draft.language,
+                            latitude = if (draft.geoMode == "IP" && working.lastLat != 0.0) working.lastLat else draft.latitude,
+                            longitude = if (draft.geoMode == "IP" && working.lastLon != 0.0) working.lastLon else draft.longitude
+                        )
+                        countryStatus =
+                            "${cs.label} connected • ${working.lastIp} • " +
+                                "${working.lastMs} ms — " +
+                                "timezone + language auto-matched. " +
+                                "Save the profile to apply."
+                        proxyPickerOpen = false
+                    },
+                    onBack = { connectingCountry = null; proxyPickerOpen = false }
+                )
+                extSection != null -> ExtendedSectionView(
+                    section = extSection!!,
+                    draft = draft,
+                    onDraft = { draft = it },
+                    onBack = { extSection = null },
+                    onOpenProxyPicker = { extSection = null; proxyPickerOpen = true },
+                    onCheckProxy = onCheckProxy,
+                    onClearNotice = onClearNotice,
+                    proxyCheckResult = proxyCheckResult
+                )
+                else -> {
+                    Text(
+                        if (initial == null) "Add profile" else "Edit profile",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 20.sp
+                    )
+                    // Templates (v2.0 Pro): one tap fills the identity below.
+                    Text("Template", style = MaterialTheme.typography.labelLarge, color = GoGreyText)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        for (t in listOf("Facebook", "Google", "Amazon", "TikTok")) {
+                            FilterChip(
+                                selected = false,
+                                onClick = {
+                                    val filled = applyTemplate(draft, t)
+                                    draft = if (initial == null &&
+                                        (draft.name == "Profile 1" || draft.name.isBlank())
+                                    ) filled.copy(name = t) else filled
+                                },
+                                label = { Text(t) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFFE8EAED),
+                                    containerColor = Color.White
+                                )
+                            )
+                        }
+                    }
+                    OutlinedTextField(
+                        value = draft.name, onValueChange = { draft = draft.copy(name = it) },
+                        label = { Text("Name") }, modifier = Modifier.fillMaxWidth(), singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = draft.folder, onValueChange = { draft = draft.copy(folder = it) },
+                        label = { Text("Folder") }, modifier = Modifier.fillMaxWidth(), singleLine = true
+                    )
+                    // Proxy row (v2.6): tap opens the country picker.
+                    Text("Proxy", fontWeight = FontWeight.Bold)
+                    SectionRow(
+                        label = if (draft.proxyMode == "NONE") "Connect proxy"
+                        else "${draft.proxyMode} ${draft.proxyHost}:${draft.proxyPort}",
+                        sub = if (draft.proxyMode == "NONE") "Tap to pick a country"
+                        else "Timezone ${draft.timezone} • ${draft.language}",
+                        onClick = { proxyPickerOpen = true }
+                    )
+                    countryStatus?.let { Text(it, color = GoGreyText) }
+                    // Extended settings (v2.6): GoLogin's 5 sections.
+                    Text("Extended settings", fontWeight = FontWeight.Bold)
+                    for ((key, label) in listOf(
+                        "overview" to "Profile Overview",
+                        "proxy" to "Proxy & Location",
+                        "browser" to "Browser",
+                        "storage" to "Storage",
+                        "hardware" to "Hardware"
+                    )) {
+                        SectionRow(label) { extSection = key }
+                    }
+                    error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = {
+                                when {
+                                    draft.name.isBlank() -> error = "Name is required."
+                                    draft.proxyMode != "NONE" && draft.proxyHost.isBlank() ->
+                                        error = "Proxy host is required for ${draft.proxyMode}."
+                                    draft.proxyPort !in 1..65535 ->
+                                        error = "Proxy port must be 1–65535."
+                                    else -> onSave(draft)
+                                }
+                            },
+                            // v2.3: Save stays locked while a one-tap connect is
+                            // running — saving early used to cancel the job, which
+                            // is exactly how v2.2 lost the proxy on the phone.
+                            enabled = connectingCountry == null,
+                            colors = ButtonDefaults.buttonColors(containerColor = GoGreen),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                if (connectingCountry != null) "Connecting ${connectingCountry}…"
+                                else if (initial == null) "Add profile" else "Save profile"
+                            )
+                        }
+                        TextButton(onClick = onCancel) { Text("Cancel") }
+                    }
+                    Spacer(Modifier.height(24.dp))
+                }
+            }
+        }
+    }
+}
+
+/** A bordered row with a label, optional sub-text and a chevron. */
+@Composable
+private fun SectionRow(label: String, sub: String? = null, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .border(1.dp, GoDivider, RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(label, fontWeight = FontWeight.Bold)
+            sub?.let { Text(it, color = GoGreyText, fontSize = 13.sp) }
+        }
+        Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = GoGreyText)
+    }
+}
+
+/** A row of single-choice chips. */
+@Composable
+private fun ChoiceChips(
+    options: List<Pair<String, String>>,
+    selected: String,
+    onSelect: (String) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        for ((value, label) in options) {
+            FilterChip(
+                selected = selected == value,
+                onClick = { onSelect(value) },
+                label = { Text(label) }
+            )
+        }
+    }
+}
+
+/** A label + switch row. */
+@Composable
+private fun SwitchRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(label)
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+/**
+ * Country proxy picker (v2.6): the GoLogin-style Add proxy screen, now
+ * inside Add profile. Tap a country → fetch + test free proxies for it
+ * (fastest working wins) → "Proxy is ok!" → Add proxy applies it to
+ * the draft.
+ */
+@Composable
+private fun ProxyPickerView(
+    proxyStore: ProxyStore,
+    scope: CoroutineScope,
+    connectingCountry: String?,
+    onConnectingCountry: (String?) -> Unit,
+    countryStatus: String?,
+    onCountryStatus: (String?) -> Unit,
+    onPicked: (ProxyEntry, Profile.CountrySettings) -> Unit,
+    onBack: () -> Unit
+) {
+    var pickedProxy by remember { mutableStateOf<ProxyEntry?>(null) }
+    var pickedCode by remember { mutableStateOf<String?>(null) }
+    var pickingError by remember { mutableStateOf<String?>(null) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+            }
+            Text("Add proxy", fontWeight = FontWeight.Bold, fontSize = 20.sp)
+        }
+        Text(
+            "Pick a country — the app fetches and tests free proxies for it.",
+            color = GoGreyText
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .border(1.dp, GoDivider, RoundedCornerShape(12.dp))
+        ) {
+            for (code in Profile.pickerCountries) {
+                val cs = Profile.countrySettings(code)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = connectingCountry == null) {
+                            pickedProxy = null
+                            pickedCode = code
+                            pickingError = null
+                            onConnectingCountry(code)
+                            onCountryStatus("Fetching $code proxies…")
+                            scope.launch {
+                                val candidates = proxyStore.fetchFreeProxies(code, limit = 10)
+                                if (candidates.isEmpty()) {
+                                    pickingError =
+                                        "Could not fetch any free ${cs.label} proxies — " +
+                                            "check connection and try again."
+                                } else {
+                                    onCountryStatus("Testing ${candidates.size} ${cs.label} proxies…")
+                                    val working = proxyStore.checkFirstWorking(candidates)
+                                    if (working != null) {
+                                        pickedProxy = working
+                                        onCountryStatus(
+                                            "${cs.label} connected • ${working.lastIp} • " +
+                                                "${working.lastMs} ms"
+                                        )
+                                    } else {
+                                        pickingError =
+                                            "No working free ${cs.label} proxy right now — " +
+                                                "free proxies die fast. Try again."
+                                    }
+                                }
+                                onConnectingCountry(null)
+                            }
+                        }
+                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(Profile.flagEmoji(code), fontSize = 20.sp)
+                    Spacer(Modifier.width(12.dp))
+                    Text(cs.label, modifier = Modifier.weight(1f))
+                    Icon(
+                        Icons.Filled.ChevronRight,
+                        contentDescription = null,
+                        tint = GoGreyText
+                    )
+                }
+            }
+        }
+        if (connectingCountry != null) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(countryStatus ?: "Checking…", color = GoGreyText)
+            }
+        } else if (pickedProxy != null && pickedCode != null) {
+            val wp = pickedProxy!!
+            val cs = Profile.countrySettings(pickedCode!!)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .border(1.dp, GoDivider, RoundedCornerShape(12.dp))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    "Selected proxy: ${Profile.flagEmoji(pickedCode!!)} ${cs.label} • Free",
+                    fontWeight = FontWeight.Bold
+                )
+                Text("HTTP", color = GoGreyText)
+                Text(
+                    "Proxy is ok! • ${wp.lastIp} • ${wp.lastMs} ms" +
+                        (if (wp.lastTimezone.isNotBlank()) " • ${wp.lastTimezone}" else ""),
+                    color = GoGreenDark,
+                    fontWeight = FontWeight.Bold
+                )
+                Button(
+                    onClick = { onPicked(wp, cs) },
+                    colors = ButtonDefaults.buttonColors(containerColor = GoGreen),
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Add proxy") }
+            }
+        } else {
+            pickingError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            countryStatus?.let { Text(it, color = GoGreyText) }
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+/** Extended settings (v2.6): GoLogin's 5 sub-screens. */
+@Composable
+private fun ExtendedSectionView(
+    section: String,
+    draft: Profile,
+    onDraft: (Profile) -> Unit,
+    onBack: () -> Unit,
+    onOpenProxyPicker: () -> Unit,
+    onCheckProxy: (Profile) -> Unit,
+    onClearNotice: () -> Unit,
+    proxyCheckResult: String?
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+            }
             Text(
-                if (initial == null) "Add profile" else "Edit profile",
+                when (section) {
+                    "overview" -> "Profile Overview"
+                    "proxy" -> "Proxy & Location"
+                    "browser" -> "Browser"
+                    "storage" -> "Storage"
+                    else -> "Hardware"
+                },
                 fontWeight = FontWeight.Bold,
                 fontSize = 20.sp
             )
-            // Templates (v2.0 Pro): one tap fills the identity below.
-            Text("Template", style = MaterialTheme.typography.labelLarge, color = GoGreyText)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                for (t in listOf("Facebook", "Google", "Amazon", "TikTok")) {
-                    FilterChip(
-                        selected = false,
-                        onClick = {
-                            val filled = applyTemplate(draft, t)
-                            draft = if (initial == null &&
-                                (draft.name == "Profile 1" || draft.name.isBlank())
-                            ) filled.copy(name = t) else filled
-                        },
-                        label = { Text(t) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = Color(0xFFE8EAED),
-                            containerColor = Color.White
-                        )
-                    )
-                }
-            }
-            OutlinedTextField(
-                value = draft.name, onValueChange = { draft = draft.copy(name = it) },
-                label = { Text("Name") }, modifier = Modifier.fillMaxWidth(), singleLine = true
+        }
+        when (section) {
+            "overview" -> OverviewSection(draft, onDraft)
+            "proxy" -> ProxyLocationSection(
+                draft, onDraft, onOpenProxyPicker,
+                onCheckProxy, onClearNotice, proxyCheckResult
             )
-            OutlinedTextField(
-                value = draft.folder, onValueChange = { draft = draft.copy(folder = it) },
-                label = { Text("Folder") }, modifier = Modifier.fillMaxWidth(), singleLine = true
-            )
-            OutlinedTextField(
-                value = draft.homeUrl, onValueChange = { draft = draft.copy(homeUrl = it) },
-                label = { Text("Home URL") }, modifier = Modifier.fillMaxWidth(), singleLine = true
-            )
-            OutlinedTextField(
-                value = draft.notes, onValueChange = { draft = draft.copy(notes = it) },
-                label = { Text("Notes (optional)") }, modifier = Modifier.fillMaxWidth()
-            )
+            "browser" -> BrowserSection(draft, onDraft)
+            "storage" -> StorageSection(draft, onDraft)
+            else -> HardwareSection(draft, onDraft)
+        }
+        Button(
+            onClick = onBack,
+            colors = ButtonDefaults.buttonColors(containerColor = GoGreen),
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Save") }
+        Spacer(Modifier.height(24.dp))
+    }
+}
 
-            if (showAdvanced) {
-            Text("Browser", fontWeight = FontWeight.Bold)
-            DropDownField(
-                "User-agent preset", Profile.USER_AGENT_PRESETS,
-                draft.userAgentPreset
-            ) { draft = draft.copy(userAgentPreset = it) }
-            if (draft.userAgentPreset == "Custom") {
-                OutlinedTextField(
-                    value = draft.userAgent,
-                    onValueChange = { draft = draft.copy(userAgent = it) },
-                    label = { Text("Custom user-agent") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-            OutlinedTextField(
-                value = draft.language, onValueChange = { draft = draft.copy(language = it) },
-                label = { Text("Language (e.g. en-US)") },
-                modifier = Modifier.fillMaxWidth(), singleLine = true
+@Composable
+private fun OverviewSection(draft: Profile, onDraft: (Profile) -> Unit) {
+    OutlinedTextField(
+        value = draft.name, onValueChange = { onDraft(draft.copy(name = it)) },
+        label = { Text("Name") }, modifier = Modifier.fillMaxWidth(), singleLine = true
+    )
+    OutlinedTextField(
+        value = draft.notes, onValueChange = { onDraft(draft.copy(notes = it)) },
+        label = { Text("Note") }, modifier = Modifier.fillMaxWidth()
+    )
+    OutlinedTextField(
+        value = draft.folder, onValueChange = { onDraft(draft.copy(folder = it)) },
+        label = { Text("Folder") }, modifier = Modifier.fillMaxWidth(), singleLine = true
+    )
+    DropDownField("Operating System", Profile.OS_OPTIONS, draft.os) { os ->
+        val (vendor, renderer) = Profile.osWebgl(os)
+        onDraft(
+            draft.copy(
+                os = os,
+                userAgent = if (draft.userAgentPreset == "Custom") draft.userAgent
+                else Profile.osUserAgent(os),
+                webglVendor = vendor,
+                webglRenderer = renderer
             )
-            OutlinedTextField(
-                value = draft.timezone, onValueChange = { draft = draft.copy(timezone = it) },
-                label = { Text("Timezone (Auto or e.g. America/New_York)") },
-                modifier = Modifier.fillMaxWidth(), singleLine = true
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = draft.screenWidth.toString(),
-                    onValueChange = { draft = draft.copy(screenWidth = it.toIntOrNull() ?: draft.screenWidth) },
-                    label = { Text("Screen width") },
-                    modifier = Modifier.weight(1f), singleLine = true
-                )
-                OutlinedTextField(
-                    value = draft.screenHeight.toString(),
-                    onValueChange = { draft = draft.copy(screenHeight = it.toIntOrNull() ?: draft.screenHeight) },
-                    label = { Text("Screen height") },
-                    modifier = Modifier.weight(1f), singleLine = true
-                )
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = draft.deviceMemory.toString(),
-                    onValueChange = { draft = draft.copy(deviceMemory = it.toIntOrNull() ?: draft.deviceMemory) },
-                    label = { Text("Device memory (GB)") },
-                    modifier = Modifier.weight(1f), singleLine = true
-                )
-                OutlinedTextField(
-                    value = draft.hardwareConcurrency.toString(),
-                    onValueChange = { draft = draft.copy(hardwareConcurrency = it.toIntOrNull() ?: draft.hardwareConcurrency) },
-                    label = { Text("CPU cores") },
-                    modifier = Modifier.weight(1f), singleLine = true
-                )
-            }
-            }
+        )
+    }
+    Button(
+        onClick = { onDraft(Profile.randomFingerprint(draft)) },
+        colors = ButtonDefaults.buttonColors(containerColor = GoGreen),
+        modifier = Modifier.fillMaxWidth()
+    ) { Text("NEW FINGERPRINT") }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .border(1.dp, GoDivider, RoundedCornerShape(12.dp))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text("Fingerprint data", fontWeight = FontWeight.Bold)
+        Text("Resolution  ${draft.screenWidth}x${draft.screenHeight}", color = GoGreyText)
+        Text("OS  ${draft.os}", color = GoGreyText)
+        Text("Languages  ${draft.language}", color = GoGreyText)
+        Text("Fonts  ${draft.fontsList.split(",").size} fonts", color = GoGreyText)
+        Text(
+            "User-agent  ${if (draft.userAgent.isNotBlank()) draft.userAgent else Profile.defaultUserAgent(draft.userAgentPreset)}",
+            color = GoGreyText
+        )
+        val canvasSpoofed = draft.canvasMode == "noise" || draft.canvasMode == "block"
+        val spoofed = canvasSpoofed || draft.webglMode == "MASKED" || draft.audioMode == "MASKED"
+        Text(
+            if (spoofed) "Fingerprint: Unique ✓" else "Fingerprint: Real (not spoofed)",
+            color = if (spoofed) GoGreenDark else GoGreyText,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
 
-            Text("Proxy", fontWeight = FontWeight.Bold)
-            // One-tap country proxy (v2.2): one tap fetches free proxies
-            // for that country, tests them, assigns the first working one
-            // AND matches the profile's timezone + language to the
-            // country — so whoer.net sees one consistent identity.
-            Text(
-                "One-tap country proxy — 1 click connects",
-                style = MaterialTheme.typography.labelLarge, color = GoGreyText
-            )
-            var connectingCountry by remember { mutableStateOf<String?>(null) }
-            var countryStatus by remember { mutableStateOf<String?>(null) }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                for (code in Profile.oneTapCountries) {
-                    val cs = Profile.countrySettings(code)
-                    FilterChip(
-                        selected = false,
-                        enabled = connectingCountry == null,
-                        onClick = {
-                            connectingCountry = code
-                            countryStatus = "Fetching $code proxies…"
-                            scope.launch {
-                                // v2.3: fetch from 3 merged sources, test
-                                // 10 in PARALLEL — first working one wins
-                                // in ~6–8s instead of 100s sequential.
-                                val candidates = proxyStore.fetchFreeProxies(code, limit = 10)
-                                if (candidates.isEmpty()) {
-                                    countryStatus =
-                                        "Could not fetch any free $code proxies — " +
-                                            "check connection and try again."
-                                } else {
-                                    countryStatus =
-                                        "Testing ${candidates.size} $code proxies…"
-                                    val working = proxyStore.checkFirstWorking(candidates)
-                                    if (working != null) {
-                                        proxyStore.add(working)
-                                        draft = draft.copy(
-                                            proxyMode = working.mode,
-                                            proxyHost = working.host,
-                                            proxyPort = working.port,
-                                            proxyUser = "",
-                                            proxyPass = "",
-                                            // v2.5: the IP's own timezone wins
-                                            // (Seattle IP = Los Angeles zone,
-                                            // not the country default New York).
-                                            timezone = working.lastTimezone
-                                                .ifBlank { cs.timezone },
-                                            language = cs.language
-                                        )
-                                        countryStatus =
-                                            "${cs.label} connected • ${working.lastIp} • " +
-                                                "${working.lastMs} ms — " +
-                                                "timezone + language auto-matched. " +
-                                                "Save the profile to apply."
-                                    } else {
-                                        countryStatus =
-                                            "No working free $code proxy right now — " +
-                                                "free proxies die fast. Try again, " +
-                                                "or add your own proxy below."
-                                    }
-                                }
-                                connectingCountry = null
-                            }
-                        },
-                        label = { Text(if (connectingCountry == code) "$code…" else code) }
-                    )
-                }
-            }
-            countryStatus?.let { Text(it, color = GoGreyText) }
-            TextButton(onClick = { showAdvanced = !showAdvanced }) {
-                Text(if (showAdvanced) "Hide extended settings" else "Extended settings")
-            }
-            if (showAdvanced) {
-            DropDownField(
-                "Proxy mode", listOf("NONE", "HTTP", "SOCKS5"), draft.proxyMode
-            ) { draft = draft.copy(proxyMode = it) }
-            if (draft.proxyMode != "NONE") {
-                OutlinedTextField(
-                    value = draft.proxyHost, onValueChange = { draft = draft.copy(proxyHost = it) },
-                    label = { Text("Proxy host") },
-                    modifier = Modifier.fillMaxWidth(), singleLine = true
-                )
-                OutlinedTextField(
-                    value = draft.proxyPort.toString(),
-                    onValueChange = { draft = draft.copy(proxyPort = it.toIntOrNull() ?: draft.proxyPort) },
-                    label = { Text("Proxy port") },
-                    modifier = Modifier.fillMaxWidth(), singleLine = true
-                )
-                OutlinedTextField(
-                    value = draft.proxyUser, onValueChange = { draft = draft.copy(proxyUser = it) },
-                    label = { Text("Proxy username (optional)") },
-                    modifier = Modifier.fillMaxWidth(), singleLine = true
-                )
-                OutlinedTextField(
-                    value = draft.proxyPass, onValueChange = { draft = draft.copy(proxyPass = it) },
-                    label = { Text("Proxy password (optional)") },
-                    modifier = Modifier.fillMaxWidth(), singleLine = true
-                )
-                Button(onClick = { onClearNotice(); onCheckProxy(draft) }) {
-                    Text("Check proxy")
-                }
-                proxyCheckResult?.let { Text(it) }
-            }
-            }
+@Composable
+private fun ProxyLocationSection(
+    draft: Profile,
+    onDraft: (Profile) -> Unit,
+    onOpenProxyPicker: () -> Unit,
+    onCheckProxy: (Profile) -> Unit,
+    onClearNotice: () -> Unit,
+    proxyCheckResult: String?
+) {
+    Text("Proxy", fontWeight = FontWeight.Bold)
+    SectionRow(
+        label = if (draft.proxyMode == "NONE") "Connect proxy"
+        else "${draft.proxyMode} ${draft.proxyHost}:${draft.proxyPort}",
+        sub = if (draft.proxyMode == "NONE") "Tap to pick a country"
+        else "Timezone ${draft.timezone}",
+        onClick = onOpenProxyPicker
+    )
+    Button(onClick = { onClearNotice(); onCheckProxy(draft) }) {
+        Text("Check proxy")
+    }
+    proxyCheckResult?.let { Text(it) }
+    Text("Timezone", fontWeight = FontWeight.Bold)
+    ChoiceChips(
+        options = listOf("IP" to "Fill based on IP", "CUSTOM" to "Custom"),
+        selected = draft.timezoneMode,
+        onSelect = { onDraft(draft.copy(timezoneMode = it)) }
+    )
+    if (draft.timezoneMode == "CUSTOM") {
+        DropDownField("Timezone", Profile.TIMEZONE_OPTIONS, draft.timezone) {
+            onDraft(draft.copy(timezone = it))
+        }
+    } else {
+        Text("Current: ${draft.timezone} (from the proxy IP)", color = GoGreyText)
+    }
+    Text("Geolocation", fontWeight = FontWeight.Bold)
+    ChoiceChips(
+        options = listOf("IP" to "Based on IP", "OFF" to "Off"),
+        selected = draft.geoMode,
+        onSelect = { onDraft(draft.copy(geoMode = it)) }
+    )
+    if (draft.geoMode == "IP") {
+        Text(
+            if (draft.latitude != null && draft.longitude != null)
+                "Current: ${draft.latitude}, ${draft.longitude} (from the proxy IP)"
+            else "Set when a proxy connects or the profile runs.",
+            color = GoGreyText
+        )
+    }
+    Text("WebRTC", fontWeight = FontWeight.Bold)
+    ChoiceChips(
+        options = listOf("disable" to "Disabled", "real" to "Real"),
+        selected = draft.webrtcMode,
+        onSelect = { onDraft(draft.copy(webrtcMode = it)) }
+    )
+    Text("Disabled is safest — Real can leak your real IP through the proxy.", color = GoGreyText)
+    Text("Custom DNS", fontWeight = FontWeight.Bold)
+    Text("Based on ip — DNS resolves through the proxy.", color = GoGreyText)
+}
 
-            if (showAdvanced) {
-            Text("Fingerprint (JS-level)", fontWeight = FontWeight.Bold)
-            DropDownField(
-                "Canvas", listOf("noise", "off"), draft.canvasMode
-            ) { draft = draft.copy(canvasMode = it) }
-            OutlinedTextField(
-                value = draft.webglVendor, onValueChange = { draft = draft.copy(webglVendor = it) },
-                label = { Text("WebGL vendor") },
-                modifier = Modifier.fillMaxWidth(), singleLine = true
-            )
-            OutlinedTextField(
-                value = draft.webglRenderer, onValueChange = { draft = draft.copy(webglRenderer = it) },
-                label = { Text("WebGL renderer") },
-                modifier = Modifier.fillMaxWidth(), singleLine = true
-            )
-            DropDownField(
-                "WebRTC", listOf("disable", "public"), draft.webrtcMode
-            ) { draft = draft.copy(webrtcMode = it) }
+@Composable
+private fun BrowserSection(draft: Profile, onDraft: (Profile) -> Unit) {
+    DropDownField(
+        "User-agent preset", Profile.USER_AGENT_PRESETS,
+        draft.userAgentPreset
+    ) { onDraft(draft.copy(userAgentPreset = it)) }
+    if (draft.userAgentPreset == "Custom") {
+        OutlinedTextField(
+            value = draft.userAgent,
+            onValueChange = { onDraft(draft.copy(userAgent = it)) },
+            label = { Text("Custom user-agent") },
+            modifier = Modifier.fillMaxWidth()
+        )
+    } else {
+        Text(
+            "User-agent: ${if (draft.userAgent.isNotBlank()) draft.userAgent else Profile.defaultUserAgent(draft.userAgentPreset)}",
+            color = GoGreyText
+        )
+    }
+    OutlinedTextField(
+        value = draft.homeUrl, onValueChange = { onDraft(draft.copy(homeUrl = it)) },
+        label = { Text("Start URL") }, modifier = Modifier.fillMaxWidth(), singleLine = true
+    )
+    Text("Languages", fontWeight = FontWeight.Bold)
+    ChoiceChips(
+        options = listOf("IP" to "IP based", "CUSTOM" to "Custom"),
+        selected = draft.languagesMode,
+        onSelect = { onDraft(draft.copy(languagesMode = it)) }
+    )
+    if (draft.languagesMode == "CUSTOM") {
+        OutlinedTextField(
+            value = draft.language, onValueChange = { onDraft(draft.copy(language = it)) },
+            label = { Text("Language (e.g. en-US)") },
+            modifier = Modifier.fillMaxWidth(), singleLine = true
+        )
+    } else {
+        Text("Current: ${draft.language} (from the proxy country)", color = GoGreyText)
+    }
+    Text("Fonts", fontWeight = FontWeight.Bold)
+    SwitchRow(
+        if (draft.fontsMasking) "Masked" else "Real",
+        draft.fontsMasking
+    ) { onDraft(draft.copy(fontsMasking = it)) }
+    Text("Masking hides unusual fonts that could fingerprint the profile.", color = GoGreyText)
+    if (draft.fontsMasking) {
+        val selected = draft.fontsList.split(",").map { it.trim() }
+            .filter { it.isNotEmpty() }.toSet()
+        for (font in Profile.FONT_OPTIONS) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        val newList = if (selected.contains(font)) selected - font
+                        else selected + font
+                        onDraft(draft.copy(fontsList = newList.joinToString(",")))
+                    }
             ) {
-                Text("Do Not Track")
-                Switch(
-                    checked = draft.doNotTrack,
-                    onCheckedChange = { draft = draft.copy(doNotTrack = it) }
-                )
+                Checkbox(checked = selected.contains(font), onCheckedChange = null)
+                Text(font)
             }
-            }
-
-            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = {
-                        when {
-                            draft.name.isBlank() -> error = "Name is required."
-                            draft.proxyMode != "NONE" && draft.proxyHost.isBlank() ->
-                                error = "Proxy host is required for ${draft.proxyMode}."
-                            draft.proxyPort !in 1..65535 ->
-                                error = "Proxy port must be 1–65535."
-                            else -> onSave(draft)
-                        }
-                    },
-                    // v2.3: Save stays locked while a one-tap connect is
-                    // running — saving early used to cancel the job, which
-                    // is exactly how v2.2 lost the proxy on the phone.
-                    enabled = connectingCountry == null,
-                    colors = ButtonDefaults.buttonColors(containerColor = GoGreen),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text(
-                        if (connectingCountry != null) "Connecting ${connectingCountry}…"
-                        else if (initial == null) "Add profile" else "Save profile"
-                    )
-                }
-                TextButton(onClick = onCancel) { Text("Cancel") }
-            }
-            Spacer(Modifier.height(24.dp))
         }
+    } else {
+        Text("Real fonts installed on this device are reported — no selection needed.", color = GoGreyText)
     }
+}
+
+@Composable
+private fun StorageSection(draft: Profile, onDraft: (Profile) -> Unit) {
+    SwitchRow("Save history", draft.saveHistory) {
+        onDraft(draft.copy(saveHistory = it))
+    }
+    SwitchRow("Save bookmarks", draft.saveBookmarks) {
+        onDraft(draft.copy(saveBookmarks = it))
+    }
+    SwitchRow("Local storage and indexedDB", draft.domStorage) {
+        onDraft(draft.copy(domStorage = it))
+    }
+    Text(
+        "Lock session, Google services, passwords, plugins and extensions " +
+            "are not available in the system WebView — they are not shown here.",
+        color = GoGreyText
+    )
+}
+
+@Composable
+private fun HardwareSection(draft: Profile, onDraft: (Profile) -> Unit) {
+    val resOptions = Profile.RESOLUTIONS.map { "${it.first}x${it.second}" }
+    val resCurrent = "${draft.screenWidth}x${draft.screenHeight}"
+    DropDownField(
+        "Resolution",
+        if (resOptions.contains(resCurrent)) resOptions else resOptions + resCurrent,
+        resCurrent
+    ) { v ->
+        val parts = v.split("x")
+        onDraft(
+            draft.copy(
+                screenWidth = parts[0].toIntOrNull() ?: draft.screenWidth,
+                screenHeight = parts.getOrNull(1)?.toIntOrNull() ?: draft.screenHeight
+            )
+        )
+    }
+    DropDownField(
+        "Device memory",
+        listOf("1 GB", "2 GB", "4 GB", "8 GB"),
+        "${draft.deviceMemory} GB"
+    ) { v ->
+        onDraft(draft.copy(deviceMemory = v.removeSuffix(" GB").toIntOrNull() ?: draft.deviceMemory))
+    }
+    DropDownField(
+        "Number of threads",
+        Profile.THREAD_COUNTS.map { it.toString() },
+        draft.hardwareConcurrency.toString()
+    ) { v ->
+        onDraft(draft.copy(hardwareConcurrency = v.toIntOrNull() ?: draft.hardwareConcurrency))
+    }
+    Text("Media devices", fontWeight = FontWeight.Bold)
+    SwitchRow(
+        if (draft.mediaMasked) "Masked • 0/0/0" else "Real",
+        draft.mediaMasked
+    ) { onDraft(draft.copy(mediaMasked = it)) }
+    Text("Canvas", fontWeight = FontWeight.Bold)
+    ChoiceChips(
+        options = listOf("real" to "Real", "noise" to "Noise", "block" to "Block"),
+        selected = draft.canvasMode,
+        onSelect = { onDraft(draft.copy(canvasMode = it)) }
+    )
+    Text("WebGL image", fontWeight = FontWeight.Bold)
+    ChoiceChips(
+        options = listOf("REAL" to "Real", "MASKED" to "Masked"),
+        selected = draft.webglMode,
+        onSelect = { onDraft(draft.copy(webglMode = it)) }
+    )
+    if (draft.webglMode == "MASKED") {
+        Text("WebGL metadata", fontWeight = FontWeight.Bold)
+        OutlinedTextField(
+            value = draft.webglVendor, onValueChange = { onDraft(draft.copy(webglVendor = it)) },
+            label = { Text("WebGL vendor") },
+            modifier = Modifier.fillMaxWidth(), singleLine = true
+        )
+        OutlinedTextField(
+            value = draft.webglRenderer, onValueChange = { onDraft(draft.copy(webglRenderer = it)) },
+            label = { Text("WebGL renderer") },
+            modifier = Modifier.fillMaxWidth(), singleLine = true
+        )
+    }
+    Text("Audio context", fontWeight = FontWeight.Bold)
+    ChoiceChips(
+        options = listOf("REAL" to "Real", "MASKED" to "Masked"),
+        selected = draft.audioMode,
+        onSelect = { onDraft(draft.copy(audioMode = it)) }
+    )
 }
