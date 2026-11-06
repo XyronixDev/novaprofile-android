@@ -1,0 +1,126 @@
+name: NovaProfile — Build Release APK
+
+# Builds the NovaProfile release APK (Kotlin + Compose, AGP 9.5.0,
+# Gradle 9.7, JDK 21, compileSdk 37, targetSdk 36, minSdk 26).
+#
+# The APK is delivered as a workflow artifact — download it from the
+# Actions tab. No zip is published from the chat.
+#
+# SIGNING (optional but recommended for a real release):
+# Add these 4 repository Secrets (Settings > Secrets and variables >
+# Actions) and the workflow signs the APK with V1+V2+V3+V4:
+#   ANDROID_KEYSTORE_BASE64  - base64 of the release .jks file
+#                              (base64 -w0 novaprofile-release.jks)
+#   NOVAPROFILE_STORE_PASSWORD - keystore password
+#   NOVAPROFILE_KEY_ALIAS      - key alias (novaprofile-release)
+#   NOVAPROFILE_KEY_PASSWORD   - key password
+# Without the secrets the build still succeeds and uploads an UNSIGNED
+# release APK (installable only after local signing). The keystore and
+# passwords are NEVER committed to the repo (see .gitignore).
+#
+# NOTE: this workflow file cannot be pushed through the GitHub API
+# (403 for workflow files) — it is uploaded through the browser UI.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install Gradle 9.7 (direct download)
+        timeout-minutes: 10
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -L --retry 3 --retry-delay 5 --max-time 300 \
+            -o gradle-9.7-bin.zip \
+            https://services.gradle.org/distributions/gradle-9.7-bin.zip
+          unzip -q gradle-9.7-bin.zip
+          echo "$RUNNER_TEMP/gradle-9.7/bin" >> "$GITHUB_PATH"
+          gradle --version
+
+      - name: Install Android SDK (API 37.0)
+        timeout-minutes: 15
+        run: |
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/lib/android-sdk}"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$ANDROID_HOME/cmdline-tools/bin/sdkmanager"
+          fi
+          if [ ! -x "$SDKMANAGER" ]; then
+            echo "cmdline-tools not found — installing them."
+            mkdir -p "$ANDROID_HOME/cmdline-tools"
+            cd "$RUNNER_TEMP"
+            curl -L --retry 3 --retry-delay 5 --max-time 300 \
+              -o cmdline-tools.zip \
+              https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip
+            unzip -q cmdline-tools.zip -d "$ANDROID_HOME/cmdline-tools"
+            mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
+            SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          fi
+          echo "sdkmanager: $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" --channel=3 "platforms;android-37.0" "build-tools;37.0.0"
+          if [ -d "$ANDROID_HOME/platforms/android-37.0" ] && [ ! -e "$ANDROID_HOME/platforms/android-37" ]; then
+            ln -s android-37.0 "$ANDROID_HOME/platforms/android-37"
+          fi
+          ls "$ANDROID_HOME/platforms/"
+
+      - name: Prepare signing (only if keystore secret is set)
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.NOVAPROFILE_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.NOVAPROFILE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.NOVAPROFILE_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "No keystore secret set — building unsigned release APK."
+            exit 0
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > "$GITHUB_WORKSPACE/novaprofile-release.jks"
+          cat > local.properties <<EOF
+          NOVAPROFILE_STORE_FILE=$GITHUB_WORKSPACE/novaprofile-release.jks
+          NOVAPROFILE_STORE_PASSWORD=$STORE_PASSWORD
+          NOVAPROFILE_KEY_ALIAS=$KEY_ALIAS
+          NOVAPROFILE_KEY_PASSWORD=$KEY_PASSWORD
+          EOF
+          echo "Signing configured from GitHub Secrets."
+
+      - name: Build release APK
+        timeout-minutes: 15
+        # NOTE: the repo does not carry gradle-wrapper.jar (binary, not
+        # pushable through the snapshot tool), so build with the Gradle
+        # installed on PATH by the earlier step, not ./gradlew.
+        run: |
+          gradle :app:assembleRelease --console=plain --stacktrace
+          ls -la app/build/outputs/apk/release/
+
+      - name: Verify APK signature (best effort)
+        continue-on-error: true
+        run: |
+          APK=$(find app/build/outputs/apk/release -name "*.apk" ! -name "*unaligned*" | head -n 1)
+          echo "APK: $APK"
+          test -n "$APK"
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose "$APK" || echo "NOTE: APK is unsigned or verify failed — sign locally before install."
+
+      - name: Upload release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NovaProfile-release-apk
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
