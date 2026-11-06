@@ -1315,7 +1315,8 @@ fun EditorScreen(
                                             language = cs.language
                                         )
                                         countryStatus =
-                                            "${cs.label} connected • ${working.lastIp} — " +
+                                            "${cs.label} connected • ${working.lastIp} • " +
+                                                "${working.lastMs} ms — " +
                                                 "timezone + language auto-matched. " +
                                                 "Save the profile to apply."
                                     } else {
