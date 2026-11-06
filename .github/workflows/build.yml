@@ -42,15 +42,19 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - name: Install Gradle 9.7 (direct download)
+      - name: Install Gradle 9.8.2 (direct download)
         timeout-minutes: 10
+        # FIX (run #1 failed): gradle-9.7-bin.zip does NOT exist —
+        # services.gradle.org returns 404 NoSuchKey for it (verified
+        # 2026-11-06). 9.8.2 is the proven version (CloneX builds use it).
+        # -f makes curl fail on HTTP errors instead of saving an error page.
         run: |
           cd "$RUNNER_TEMP"
-          curl -L --retry 3 --retry-delay 5 --max-time 300 \
-            -o gradle-9.7-bin.zip \
-            https://services.gradle.org/distributions/gradle-9.7-bin.zip
-          unzip -q gradle-9.7-bin.zip
-          echo "$RUNNER_TEMP/gradle-9.7/bin" >> "$GITHUB_PATH"
+          curl -f -L --retry 3 --retry-delay 5 --max-time 300 \
+            -o gradle-9.8.2-bin.zip \
+            https://services.gradle.org/distributions/gradle-9.8.2-bin.zip
+          unzip -q gradle-9.8.2-bin.zip
+          echo "$RUNNER_TEMP/gradle-9.8.2/bin" >> "$GITHUB_PATH"
           gradle --version
 
       - name: Install Android SDK (API 37.0)
