@@ -1,0 +1,9 @@
+# NovaProfile — never commit secrets or build output.
+*.jks
+*.keystore
+local.properties
+build/
+.gradle/
+.idea/
+*.iml
+.DS_Store
