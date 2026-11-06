@@ -101,6 +101,21 @@ data class Profile(
 
         val oneTapCountries = listOf("US", "GB", "CA", "AU", "FR", "DE", "NL", "JP")
 
+        // v2.5: country picker list (GoLogin-style Add proxy screen).
+        val pickerCountries = listOf(
+            "US", "GB", "CA", "AU", "FR", "DE", "NL", "JP",
+            "IN", "BR", "IT", "ES", "SE", "CH", "IE", "NZ"
+        )
+
+        /** Flag emoji from a 2-letter country code (regional indicators). */
+        fun flagEmoji(code: String): String {
+            val c = code.uppercase()
+            if (c.length != 2) return "🌐"
+            val base = 0x1F1E6
+            return String(Character.toChars(base + (c[0] - 'A'))) +
+                String(Character.toChars(base + (c[1] - 'A')))
+        }
+
         fun countrySettings(code: String): CountrySettings = when (code.uppercase()) {
             "US" -> CountrySettings("US", "United States", "America/New_York", "en-US")
             "GB" -> CountrySettings("GB", "United Kingdom", "Europe/London", "en-GB")
@@ -110,6 +125,14 @@ data class Profile(
             "DE" -> CountrySettings("DE", "Germany", "Europe/Berlin", "de-DE")
             "NL" -> CountrySettings("NL", "Netherlands", "Europe/Amsterdam", "nl-NL")
             "JP" -> CountrySettings("JP", "Japan", "Asia/Tokyo", "ja-JP")
+            "IN" -> CountrySettings("IN", "India", "Asia/Kolkata", "en-IN")
+            "BR" -> CountrySettings("BR", "Brazil", "America/Sao_Paulo", "pt-BR")
+            "IT" -> CountrySettings("IT", "Italy", "Europe/Rome", "it-IT")
+            "ES" -> CountrySettings("ES", "Spain", "Europe/Madrid", "es-ES")
+            "SE" -> CountrySettings("SE", "Sweden", "Europe/Stockholm", "sv-SE")
+            "CH" -> CountrySettings("CH", "Switzerland", "Europe/Zurich", "de-CH")
+            "IE" -> CountrySettings("IE", "Ireland", "Europe/Dublin", "en-IE")
+            "NZ" -> CountrySettings("NZ", "New Zealand", "Pacific/Auckland", "en-NZ")
             else -> CountrySettings(code.uppercase(), code.uppercase(), "UTC", "en-US")
         }
     }
