@@ -48,6 +48,20 @@ data class Profile(
     val fontsMasking: Boolean = true,
     val doNotTrack: Boolean = true,
 
+    // v2.6: Extended settings (GoLogin-style sections) — every field is
+    // actually applied (FingerprintJs / BrowserActivity), none is a dummy.
+    val os: String = "Android",
+    val timezoneMode: String = "IP",
+    val geoMode: String = "IP",
+    val languagesMode: String = "IP",
+    val fontsList: String = "Arial,Courier,Georgia,Helvetica,Monaco,Palatino,Tahoma,Times,Times New Roman,Verdana",
+    val webglMode: String = "MASKED",
+    val audioMode: String = "MASKED",
+    val mediaMasked: Boolean = true,
+    val saveHistory: Boolean = true,
+    val saveBookmarks: Boolean = true,
+    val domStorage: Boolean = true,
+
     val notes: String = "",
 
     // Persisted cookies for this profile, as "url<TAB>cookie" lines.
@@ -134,6 +148,77 @@ data class Profile(
             "IE" -> CountrySettings("IE", "Ireland", "Europe/Dublin", "en-IE")
             "NZ" -> CountrySettings("NZ", "New Zealand", "Pacific/Auckland", "en-NZ")
             else -> CountrySettings(code.uppercase(), code.uppercase(), "UTC", "en-US")
+        }
+
+        // v2.6: Extended settings options.
+        val OS_OPTIONS = listOf("Android", "Windows", "macOS", "Linux")
+
+        /** Chrome 151 user-agent for an OS (GoLogin's Browser section). */
+        fun osUserAgent(os: String): String = when (os) {
+            "Windows" -> "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                "(KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
+            "macOS" -> "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+                "(KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
+            "Linux" -> "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 " +
+                "(KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
+            else -> "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 " +
+                "(KHTML, like Gecko) Chrome/151.0.0.0 Mobile Safari/537.36"
+        }
+
+        /** navigator.platform for an OS. */
+        fun osPlatform(os: String): String = when (os) {
+            "Windows" -> "Win32"
+            "macOS" -> "MacIntel"
+            "Linux" -> "Linux x86_64"
+            else -> "Linux armv8l"
+        }
+
+        /** (WebGL vendor, renderer) for an OS. */
+        fun osWebgl(os: String): Pair<String, String> = when (os) {
+            "Windows" -> "Google Inc. (NVIDIA)" to
+                "ANGLE (NVIDIA, NVIDIA GeForce GTX 1060 Direct3D11 vs_5_0 ps_5_0, D3D11)"
+            "macOS" -> "Google Inc. (Apple)" to
+                "ANGLE (Apple, ANGLE Metal Renderer: Apple M1, Unspecified Version)"
+            "Linux" -> "Google Inc. (Intel)" to
+                "ANGLE (Intel, Mesa Intel(R) UHD Graphics 620 (KBL GT2), OpenGL 4.6)"
+            else -> "Google Inc. (ARM)" to
+                "ANGLE (ARM, Mali-G57 MC2, OpenGL ES 3.2)"
+        }
+
+        val RESOLUTIONS = listOf(
+            360 to 800, 390 to 844, 412 to 915, 375 to 812, 414 to 896,
+            360 to 760, 402 to 874, 380 to 850, 428 to 926
+        )
+        val DEVICE_MEMORIES = listOf(1, 2, 4, 8)
+        val THREAD_COUNTS = listOf(2, 4, 6, 8, 10, 12, 16, 20, 24, 32, 64)
+        val FONT_OPTIONS = listOf(
+            "Arial", "Courier", "Courier New", "Georgia", "Helvetica", "Monaco",
+            "Palatino", "Tahoma", "Times", "Times New Roman", "Verdana", "Baskerville"
+        )
+        val TIMEZONE_OPTIONS = listOf(
+            "America/New_York", "America/Chicago", "America/Denver",
+            "America/Los_Angeles", "Europe/London", "Europe/Paris",
+            "Europe/Berlin", "Asia/Tokyo", "Asia/Kolkata",
+            "Australia/Sydney", "UTC"
+        )
+
+        /** GoLogin's "NEW FINGERPRINT": a fresh random hardware identity
+         * for the same OS — resolution, memory, threads, WebGL, UA.
+         * Name, folder, proxy, timezone and language stay untouched. */
+        fun randomFingerprint(p: Profile): Profile {
+            val r = kotlin.random.Random(System.currentTimeMillis())
+            val res = RESOLUTIONS[r.nextInt(RESOLUTIONS.size)]
+            val (vendor, renderer) = osWebgl(p.os)
+            return p.copy(
+                screenWidth = res.first,
+                screenHeight = res.second,
+                deviceMemory = DEVICE_MEMORIES[r.nextInt(DEVICE_MEMORIES.size)],
+                hardwareConcurrency = THREAD_COUNTS[r.nextInt(THREAD_COUNTS.size)],
+                webglVendor = vendor,
+                webglRenderer = renderer,
+                userAgent = if (p.userAgentPreset == "Custom") p.userAgent
+                else osUserAgent(p.os)
+            )
         }
     }
 }
