@@ -2,6 +2,8 @@ package com.novaprofiles.app.util
 
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
@@ -102,40 +104,100 @@ class ProxyStore(context: Context) {
     }
 
     /**
-     * Free proxies (v2.1): fetches a few public US HTTP proxies so the user
-     * can test a foreign IP without buying one. Free proxies are
-     * best-effort — most are dead or slow, which is why every entry must
-     * be Tested before use. Primary: ProxyScrape free API (US only);
-     * fallback: a public GitHub proxy list (any country).
+     * Free proxies (v2.1, rebuilt v2.3): fetches public HTTP proxies for a
+     * country so the user can test a foreign IP without buying one.
+     *
+     * v2.3 lesson (measured 2026-11-07: 14/14 free proxies from the old
+     * single source were dead — TCP open, CONNECT refused/hung): one
+     * source is never enough. This merges THREE sources in parallel —
+     * Geonode (tested, latency-sorted, elite only), ProxyScrape (country
+     * filtered), GitHub raw list as last resort — dedupes, and returns
+     * up to [limit] candidates for parallel testing. Free proxies are
+     * still best-effort: most die within hours, so the caller must test
+     * them (see checkFirstWorking) and the user may need to retry.
      */
-    suspend fun fetchFreeProxies(country: String = "US"): List<ProxyEntry> =
+    suspend fun fetchFreeProxies(country: String = "US", limit: Int = 10): List<ProxyEntry> =
         withContext(Dispatchers.IO) {
-            val lines = try {
-                URL(
-                    "https://api.proxyscrape.com/v2/?request=getproxies" +
-                        "&protocol=http&timeout=5000&country=$country" +
-                        "&ssl=all&anonymity=elite,anonymous"
-                ).readText().lines()
-            } catch (e: Exception) {
-                emptyList()
-            }.filter { it.contains(":") }
-            val source = if (lines.isNotEmpty()) lines else try {
+            val cc = country.uppercase()
+            val geonode = async {
+                try {
+                    val body = URL(
+                        "https://proxylist.geonode.com/api/proxy-list" +
+                            "?limit=50&page=1&sort_by=latency&sort_type=asc" +
+                            "&country=$cc&anonymityLevel=elite" +
+                            "&protocols=http%2Chttps"
+                    ).readText()
+                    val arr = JSONObject(body).optJSONArray("data") ?: return@async emptyList<String>()
+                    (0 until arr.length()).mapNotNull { i ->
+                        val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                        val host = o.optString("ip")
+                        val port = o.optInt("port", 0)
+                        if (host.isBlank() || port <= 0) return@mapNotNull null
+                        "$host:$port"
+                    }
+                } catch (e: Exception) {
+                    emptyList()
+                }
+            }
+            val scrape = async {
+                try {
+                    URL(
+                        "https://api.proxyscrape.com/v2/?request=getproxies" +
+                            "&protocol=http&timeout=5000&country=$cc" +
+                            "&ssl=all&anonymity=elite,anonymous"
+                    ).readText().lines().filter { it.contains(":") }
+                } catch (e: Exception) {
+                    emptyList()
+                }
+            }
+            val merged = (geonode.await() + scrape.await())
+                .map { it.trim() }.filter { it.contains(":") }.distinct()
+            val source = if (merged.isNotEmpty()) merged else try {
                 URL("https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt")
                     .readText().lines().filter { it.contains(":") }
             } catch (e: Exception) {
                 emptyList()
             }
-            source.take(5).mapIndexedNotNull { i, line ->
-                val parts = line.trim().split(":")
+            source.take(limit).mapIndexedNotNull { i, line ->
+                val parts = line.split(":")
                 if (parts.size < 2) return@mapIndexedNotNull null
                 val port = parts[1].toIntOrNull() ?: return@mapIndexedNotNull null
                 ProxyEntry(
-                    name = "Free ${country.uppercase()} ${i + 1}",
+                    name = "Free $cc ${i + 1}",
                     mode = "HTTP",
                     host = parts[0],
                     port = port
                 )
             }
+        }
+
+    /**
+     * Parallel first-working test (v2.3): tests all [candidates] at once
+     * and returns the first one that actually proxies. Sequential
+     * testing was the v2.2 failure — 10s timeout per dead proxy meant
+     * the user waited ~9s, saw nothing, and saved, cancelling the job.
+     * With parallel testing + 6s check timeouts, a batch of 10 resolves
+     * in ~6–8s even when 9 of them are dead.
+     */
+    suspend fun checkFirstWorking(candidates: List<ProxyEntry>): ProxyEntry? =
+        withContext(Dispatchers.IO) {
+            val deferreds = candidates.map { async { check(it) } }
+            var working: ProxyEntry? = null
+            val deadline = System.currentTimeMillis() + 12_000
+            while (working == null && System.currentTimeMillis() < deadline) {
+                for (d in deferreds) {
+                    if (d.isCompleted) {
+                        val r = d.await()
+                        if (r.ok) {
+                            working = r
+                            break
+                        }
+                    }
+                }
+                if (working == null) delay(200)
+            }
+            deferreds.forEach { it.cancel() }
+            working
         }
 
     /** Live check through the proxy. Returns the entry with fresh results. */
@@ -145,8 +207,11 @@ class ProxyStore(context: Context) {
             val type = if (entry.mode == "SOCKS5") Proxy.Type.SOCKS else Proxy.Type.HTTP
             val proxy = Proxy(type, InetSocketAddress(entry.host, entry.port))
             val conn = URL("https://api.ipify.org").openConnection(proxy) as HttpURLConnection
-            conn.connectTimeout = 10_000
-            conn.readTimeout = 10_000
+            // v2.3: 6s — a proxy slower than this to answer ipify is
+            // unusable for browsing anyway, and parallel batches must
+            // resolve fast.
+            conn.connectTimeout = 6_000
+            conn.readTimeout = 6_000
             if (entry.user.isNotBlank()) {
                 val creds = android.util.Base64.encodeToString(
                     "${entry.user}:${entry.pass}".toByteArray(Charsets.UTF_8),
@@ -164,8 +229,8 @@ class ProxyStore(context: Context) {
             try {
                 val c2 = URL("http://ip-api.com/json/$ip?fields=status,country,countryCode")
                     .openConnection(proxy) as HttpURLConnection
-                c2.connectTimeout = 10_000
-                c2.readTimeout = 10_000
+                c2.connectTimeout = 6_000
+                c2.readTimeout = 6_000
                 val body = c2.inputStream.bufferedReader().readText()
                 c2.disconnect()
                 val o = JSONObject(body)
