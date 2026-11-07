@@ -42,16 +42,12 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
-import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.RestoreFromTrash
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.Person
@@ -115,56 +111,54 @@ class MainActivity : ComponentActivity() {
 }
 
 /** Profile templates (v2.0 Pro): one tap fills home URL + identity. */
-fun applyTemplate(draft: Profile, template: String): Profile = when (template) {
-    "Facebook" -> draft.copy(
-        homeUrl = "https://www.facebook.com",
-        userAgentPreset = "Chrome Android",
-        language = "en-US",
-        timezone = "America/New_York",
-        screenWidth = 1080, screenHeight = 2400
-    )
-    "Google" -> draft.copy(
-        homeUrl = "https://www.google.com",
-        userAgentPreset = "Chrome Android",
-        language = "en-US",
-        timezone = "America/Los_Angeles",
-        screenWidth = 1080, screenHeight = 2400
-    )
-    "Amazon" -> draft.copy(
-        homeUrl = "https://www.amazon.com",
-        userAgentPreset = "Chrome Desktop",
-        language = "en-US",
-        timezone = "America/New_York",
-        screenWidth = 1920, screenHeight = 1080
-    )
-    "TikTok" -> draft.copy(
-        homeUrl = "https://www.tiktok.com",
-        userAgentPreset = "Chrome Android",
-        language = "en-US",
-        timezone = "America/Los_Angeles",
-        screenWidth = 1080, screenHeight = 2400
-    )
-    else -> draft
+// v2.7.2: templates removed with the Add-profile simplification —
+// new profiles are auto-numbered and the proxy pick sets the identity.
+
+/**
+ * v2.7.2: the card flag comes from the profile's stored proxy country
+ * first — that is the real proxy. Language is only a fallback (old
+ * profiles created before proxyCountry existed).
+ */
+fun countryOf(profile: Profile): Pair<String, String> {
+    val pc = profile.proxyCountry.trim().uppercase()
+    if (pc.length == 2 && pc in Profile.pickerCountries) {
+        return Profile.flagEmoji(pc) to pc
+    }
+    return when {
+        profile.language.startsWith("en-GB") -> "🇬🇧" to "GB"
+        profile.language.startsWith("en-CA") -> "🇨🇦" to "CA"
+        profile.language.startsWith("fr") -> "🇫🇷" to "FR"
+        profile.language.startsWith("de") -> "🇩🇪" to "DE"
+        profile.language.startsWith("es") -> "🇪🇸" to "ES"
+        profile.language.startsWith("pt") -> "🇧🇷" to "BR"
+        profile.language.startsWith("it") -> "🇮🇹" to "IT"
+        profile.language.startsWith("nl") -> "🇳🇱" to "NL"
+        profile.language.startsWith("ja") -> "🇯🇵" to "JP"
+        profile.language.startsWith("ko") -> "🇰🇷" to "KR"
+        profile.language.startsWith("zh") -> "🇨🇳" to "CN"
+        profile.language.startsWith("ru") -> "🇷🇺" to "RU"
+        profile.language.startsWith("pl") -> "🇵🇱" to "PL"
+        profile.language.startsWith("tr") -> "🇹🇷" to "TR"
+        profile.language.startsWith("ar") -> "🇸🇦" to "SA"
+        else -> "🇺🇸" to "US"
+    }
 }
 
-/** Country flag + code derived from the profile language (display only). */
-fun countryOf(profile: Profile): Pair<String, String> = when {
-    profile.language.startsWith("en-GB") -> "🇬🇧" to "GB"
-    profile.language.startsWith("en-CA") -> "🇨🇦" to "CA"
-    profile.language.startsWith("fr") -> "🇫🇷" to "FR"
-    profile.language.startsWith("de") -> "🇩🇪" to "DE"
-    profile.language.startsWith("es") -> "🇪🇸" to "ES"
-    profile.language.startsWith("pt") -> "🇧🇷" to "BR"
-    profile.language.startsWith("it") -> "🇮🇹" to "IT"
-    profile.language.startsWith("nl") -> "🇳🇱" to "NL"
-    profile.language.startsWith("ja") -> "🇯🇵" to "JP"
-    profile.language.startsWith("ko") -> "🇰🇷" to "KR"
-    profile.language.startsWith("zh") -> "🇨🇳" to "CN"
-    profile.language.startsWith("ru") -> "🇷🇺" to "RU"
-    profile.language.startsWith("pl") -> "🇵🇱" to "PL"
-    profile.language.startsWith("tr") -> "🇹🇷" to "TR"
-    profile.language.startsWith("ar") -> "🇸🇦" to "SA"
-    else -> "🇺🇸" to "US"
+/**
+ * v2.7.2: resolve a saved proxy's country to a 2-letter code. Sources
+ * disagree on the format — "US • United States" (ProxyScrape/GitHub),
+ * a bare full name "United States" (Geonode), or a bare code "US".
+ * The old code only handled the first form, so Geonode proxies never
+ * updated the language and the card kept showing the old country.
+ */
+fun proxyCountryCode(entryCountry: String): String? {
+    val token = entryCountry.substringBefore(" •").trim()
+    if (token.length == 2 && token.uppercase() in Profile.pickerCountries) {
+        return token.uppercase()
+    }
+    return Profile.pickerCountries.firstOrNull {
+        Profile.countrySettings(it).label.equals(token, ignoreCase = true)
+    }
 }
 
 private enum class HomeTab { PROFILES, PROXIES, SETTINGS }
@@ -173,11 +167,10 @@ private enum class HomeTab { PROFILES, PROXIES, SETTINGS }
 @Composable
 fun MainScreen(vm: ProfileViewModel = viewModel()) {
     val profiles by vm.profiles.collectAsState()
-    val trash by vm.trashProfiles.collectAsState()
+    // v2.7.2: trash is gone — no trash list, no showTrash state.
     val folders by vm.folders.collectAsState()
     val query by vm.query.collectAsState()
     val selectedFolder by vm.selectedFolder.collectAsState()
-    val showTrash by vm.showTrash.collectAsState()
     val proxyCheck by vm.proxyCheckResult.collectAsState()
     val importResult by vm.importResult.collectAsState()
     val exportResult by vm.exportResult.collectAsState()
@@ -296,11 +289,9 @@ fun MainScreen(vm: ProfileViewModel = viewModel()) {
                 HomeTab.PROFILES -> ProfilesTab(
                     vm = vm,
                     profiles = profiles,
-                    trash = trash,
                     folders = folders,
                     query = query,
                     selectedFolder = selectedFolder,
-                    showTrash = showTrash,
                     searchOpen = searchOpen,
                     onSearchOpen = { searchOpen = it },
                     runningIds = runningIds,
@@ -360,10 +351,9 @@ fun MainScreen(vm: ProfileViewModel = viewModel()) {
                     onStop = { p -> stopProfile(p.id) },
                     onStopAll = { stopProfile(null) },
                     onEdit = { editing = it },
-                    onDuplicate = { vm.duplicate(it) },
-                    onTrash = { pendingDelete = it },
-                    onRestore = { vm.restore(it) },
-                    onDeleteForever = { pendingDelete = it },
+                    // v2.7.2: no Duplicate, no trash — Delete asks once
+                    // and then permanently deletes the profile.
+                    onDelete = { pendingDelete = it },
                     onCheckFingerprint = { labProfile = it },
                     onShowAbout = { showAbout = true }
                 )
@@ -378,8 +368,13 @@ fun MainScreen(vm: ProfileViewModel = viewModel()) {
                         // follow the proxy's IP — but only when the
                         // profile's modes say IP-based; Custom keeps
                         // the user's own values.
-                        val code = entry.country.substringBefore(" •").trim()
-                        val cs = if (code.length == 2) Profile.countrySettings(code) else null
+                        // v2.7.2: resolve the country with the helper
+                        // (bare full names from Geonode included) and
+                        // store it on the profile — the card flag reads
+                        // this, so the card can no longer show the old
+                        // country after the proxy changes.
+                        val code = proxyCountryCode(entry.country)
+                        val cs = code?.let { Profile.countrySettings(it) }
                         vm.update(
                             p.copy(
                                 proxyMode = entry.mode,
@@ -387,6 +382,7 @@ fun MainScreen(vm: ProfileViewModel = viewModel()) {
                                 proxyPort = entry.port,
                                 proxyUser = entry.user,
                                 proxyPass = entry.pass,
+                                proxyCountry = code ?: p.proxyCountry,
                                 timezone = if (p.timezoneMode == "IP")
                                     entry.lastTimezone.ifBlank { p.timezone } else p.timezone,
                                 language = if (p.languagesMode == "IP" && cs != null)
@@ -404,12 +400,8 @@ fun MainScreen(vm: ProfileViewModel = viewModel()) {
                     proxyStore = proxyStore,
                     settingsStore = settingsStore,
                     onOpenLab = { labProfile = it },
-                    trashCount = trash.size,
                     onExport = { exportLauncher.launch("novaprofile-profiles.zip") },
                     onImport = { importLauncher.launch(arrayOf("*/*")) },
-                    onShowTrash = { vm.showTrash.value = true; tab = HomeTab.PROFILES },
-                    onHideTrash = { vm.showTrash.value = false },
-                    showTrash = showTrash,
                     onAbout = { showAbout = true },
                     notice = importResult ?: exportResult
                 )
@@ -418,9 +410,18 @@ fun MainScreen(vm: ProfileViewModel = viewModel()) {
     }
 
     // Add/Edit profile sheet (v2.5) — overlays the home, like GoLogin.
+    // v2.7.2: the next auto-numbered name for a new profile — the max
+    // existing "Profile N" + 1, so a deleted number is never reused.
+    val nextProfileName = run {
+        val max = profiles.mapNotNull {
+            Regex("""^Profile (\d+)$""").find(it.name)?.groupValues?.getOrNull(1)?.toIntOrNull()
+        }.maxOrNull() ?: 0
+        "Profile ${max + 1}"
+    }
     if (editing != null || creating) {
         EditorScreen(
             initial = editing,
+            nextProfileName = nextProfileName,
             onSave = { p ->
                 if (editing != null) vm.update(p) else vm.create(p)
                 editing = null
@@ -440,7 +441,7 @@ fun MainScreen(vm: ProfileViewModel = viewModel()) {
             title = { Text("About NovaProfile") },
             text = {
                 Text(
-                    "NovaProfile 2.7.1 Pro — original multi-profile browser.\n\n" +
+                    "NovaProfile 2.7.2 Pro — original multi-profile browser.\n\n" +
                         "• Unlimited profiles, everything free, no billing, no trial.\n" +
                         "• Per-profile cookies, proxy, user-agent, language, " +
                         "screen, WebGL and Canvas settings.\n" +
@@ -459,14 +460,15 @@ fun MainScreen(vm: ProfileViewModel = viewModel()) {
         )
     }
 
+    // v2.7.2: delete is permanent — one confirm, no trash step.
     pendingDelete?.let { p ->
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
-            title = { Text(if (showTrash) "Delete forever?" else "Move to trash?") },
-            text = { Text("\"${p.name}\" will be ${if (showTrash) "deleted permanently" else "moved to trash"}.") },
+            title = { Text("Delete profile?") },
+            text = { Text("\"${p.name}\" will be deleted permanently.") },
             confirmButton = {
                 TextButton(onClick = {
-                    if (showTrash) vm.deleteForever(p) else vm.moveToTrash(p)
+                    vm.deleteForever(p)
                     pendingDelete = null
                 }) { Text("Delete") }
             },
@@ -517,11 +519,9 @@ private fun BottomNavItem(
 private fun ProfilesTab(
     vm: ProfileViewModel,
     profiles: List<Profile>,
-    trash: List<Profile>,
     folders: List<String>,
     query: String,
     selectedFolder: String,
-    showTrash: Boolean,
     searchOpen: Boolean,
     onSearchOpen: (Boolean) -> Unit,
     runningIds: Set<Long>,
@@ -530,10 +530,8 @@ private fun ProfilesTab(
     onStop: (Profile) -> Unit,
     onStopAll: () -> Unit,
     onEdit: (Profile) -> Unit,
-    onDuplicate: (Profile) -> Unit,
-    onTrash: (Profile) -> Unit,
-    onRestore: (Profile) -> Unit,
-    onDeleteForever: (Profile) -> Unit,
+    // v2.7.2: no Duplicate, no trash — onDelete permanently deletes.
+    onDelete: (Profile) -> Unit,
     onCheckFingerprint: (Profile) -> Unit,
     onShowAbout: () -> Unit
 ) {
@@ -555,74 +553,27 @@ private fun ProfilesTab(
                 Text("N", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 22.sp)
             }
             Spacer(Modifier.width(10.dp))
+            // v2.7.2: home header is just the name (+ "Connected" while
+            // a profile runs) — search icon, info icon and the search
+            // field are removed (user order); About stays in Settings.
             Text(
                 "NovaProfile",
                 fontWeight = FontWeight.Bold,
                 fontSize = 20.sp,
+                maxLines = 1,
                 modifier = Modifier.weight(1f)
             )
             // v2.3: GoLogin shows "Connected" up here when a profile runs.
             if (runningIds.isNotEmpty()) {
                 Text("Connected", color = GoGreyText, fontSize = 14.sp)
-                Spacer(Modifier.width(8.dp))
-            }
-            IconButton(onClick = { onSearchOpen(!searchOpen) }) {
-                Icon(Icons.Filled.Search, contentDescription = "Search", tint = Color.Black)
-            }
-            IconButton(onClick = onShowAbout) {
-                Icon(Icons.Filled.Info, contentDescription = "About", tint = Color.Black)
             }
         }
-        if (searchOpen) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = { vm.query.value = it },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-                placeholder = { Text("Search profiles") },
-                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                singleLine = true
-            )
-            Spacer(Modifier.height(8.dp))
-        }
-        // Folder row: folder icon + All + folder pills.
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = { /* folders are created in the editor */ }) {
-                Icon(Icons.Filled.Folder, contentDescription = "Folders", tint = Color.Black)
-            }
-            FilterChip(
-                selected = selectedFolder == "All",
-                onClick = { vm.selectedFolder.value = "All" },
-                label = { Text("All") },
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = Color(0xFFE8EAED),
-                    containerColor = Color.White
-                )
-            )
-            for (f in folders) {
-                FilterChip(
-                    selected = selectedFolder == f,
-                    onClick = { vm.selectedFolder.value = f },
-                    label = { Text(f) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = Color(0xFFE8EAED),
-                        containerColor = Color.White
-                    )
-                )
-            }
-        }
+        // v2.7.2: folder row removed (user order) — folder icon + All +
+        // folder pills are gone; every profile lives in General.
         Spacer(Modifier.height(4.dp))
 
         // Sessions banner (v2.0 Pro): running profiles + Stop all.
-        if (runningIds.isNotEmpty() && !showTrash) {
+        if (runningIds.isNotEmpty()) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -646,7 +597,7 @@ private fun ProfilesTab(
             }
         }
 
-        val shown = if (showTrash) trash else profiles
+        val shown = profiles
         if (shown.isEmpty()) {
             Column(
                 modifier = Modifier.fillMaxSize(),
@@ -654,13 +605,12 @@ private fun ProfilesTab(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    if (showTrash) "Trash is empty" else "No profiles yet",
+                    "No profiles yet",
                     style = MaterialTheme.typography.titleMedium
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    if (showTrash) "Deleted profiles land here first."
-                    else "Tap Add profile to create your first profile.",
+                    "Tap Add profile to create your first profile.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = GoGreyText
                 )
@@ -670,16 +620,12 @@ private fun ProfilesTab(
                 items(shown, key = { it.id }) { p ->
                     GoProfileRow(
                         profile = p,
-                        inTrash = showTrash,
                         running = runningIds.contains(p.id),
                         syncing = syncingIds.contains(p.id),
                         onRun = { onRun(p) },
                         onStop = { onStop(p) },
                         onEdit = { onEdit(p) },
-                        onDuplicate = { onDuplicate(p) },
-                        onTrash = { onTrash(p) },
-                        onRestore = { onRestore(p) },
-                        onDeleteForever = { onDeleteForever(p) },
+                        onDelete = { onDelete(p) },
                         onCheckFingerprint = { onCheckFingerprint(p) }
                     )
                 }
@@ -691,16 +637,13 @@ private fun ProfilesTab(
 @Composable
 private fun GoProfileRow(
     profile: Profile,
-    inTrash: Boolean,
     running: Boolean,
     syncing: Boolean = false,
     onRun: () -> Unit,
     onStop: () -> Unit,
     onEdit: () -> Unit,
-    onDuplicate: () -> Unit,
-    onTrash: () -> Unit,
-    onRestore: () -> Unit,
-    onDeleteForever: () -> Unit,
+    // v2.7.2: no Duplicate, no trash — onDelete permanently deletes.
+    onDelete: () -> Unit,
     onCheckFingerprint: () -> Unit
 ) {
     var menuOpen by remember { mutableStateOf(false) }
@@ -715,7 +658,7 @@ private fun GoProfileRow(
         modifier = Modifier
             .fillMaxWidth()
             .background(if (running) GoMintBg else Color.White)
-            .clickable { if (!inTrash) onEdit() }
+            .clickable { onEdit() }
             .padding(horizontal = 16.dp, vertical = 12.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -747,7 +690,6 @@ private fun GoProfileRow(
                 modifier = Modifier.size(26.dp)
             )
             Spacer(Modifier.width(10.dp))
-            if (!inTrash) {
                 if (running) {
                     Box(
                         modifier = Modifier
@@ -786,39 +728,25 @@ private fun GoProfileRow(
                         Icon(Icons.Filled.PlayArrow, null, tint = GoGreen, modifier = Modifier.size(24.dp))
                     }
                 }
-            }
             Box {
                 IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(32.dp)) {
                     Icon(Icons.Filled.MoreVert, contentDescription = "More", tint = GoGreyText)
                 }
+                // v2.7.2: menu is just Check fingerprint / Edit /
+                // Delete — no Duplicate, no trash, Delete is permanent.
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    if (inTrash) {
-                        DropdownMenuItem(
-                            text = { Text("Restore") },
-                            onClick = { menuOpen = false; onRestore() }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Delete forever") },
-                            onClick = { menuOpen = false; onDeleteForever() }
-                        )
-                    } else {
-                        DropdownMenuItem(
-                            text = { Text("Check fingerprint") },
-                            onClick = { menuOpen = false; onCheckFingerprint() }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Edit") },
-                            onClick = { menuOpen = false; onEdit() }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Duplicate") },
-                            onClick = { menuOpen = false; onDuplicate() }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Move to trash") },
-                            onClick = { menuOpen = false; onTrash() }
-                        )
-                    }
+                    DropdownMenuItem(
+                        text = { Text("Check fingerprint") },
+                        onClick = { menuOpen = false; onCheckFingerprint() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Edit") },
+                        onClick = { menuOpen = false; onEdit() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Delete", color = Color(0xFFD93025)) },
+                        onClick = { menuOpen = false; onDelete() }
+                    )
                 }
             }
         }
@@ -833,7 +761,7 @@ private fun GoProfileRow(
                     .background(Color(0xFFF1F3F4))
                     .padding(horizontal = 10.dp, vertical = 4.dp)
             ) { Text(profile.folder, fontSize = 12.sp, color = GoGreyText) }
-            if (profile.lastRunAt == 0L && !inTrash) {
+            if (profile.lastRunAt == 0L) {
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(12.dp))
@@ -1104,12 +1032,8 @@ private fun SettingsTab(
     proxyStore: ProxyStore,
     settingsStore: SettingsStore,
     onOpenLab: (Profile) -> Unit,
-    trashCount: Int,
     onExport: () -> Unit,
     onImport: () -> Unit,
-    onShowTrash: () -> Unit,
-    onHideTrash: () -> Unit,
-    showTrash: Boolean,
     onAbout: () -> Unit,
     notice: String?
 ) {
@@ -1147,15 +1071,8 @@ private fun SettingsTab(
             Spacer(Modifier.width(8.dp))
             Text("Import profiles (.zip)")
         }
-        Button(
-            onClick = { if (showTrash) onHideTrash() else onShowTrash() },
-            colors = ButtonDefaults.buttonColors(containerColor = GoGreen),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Icon(Icons.Filled.Delete, null)
-            Spacer(Modifier.width(8.dp))
-            Text(if (showTrash) "Hide trash" else "Trash ($trashCount)")
-        }
+        // v2.7.2: trash button removed (user order) — profiles delete
+        // permanently from their own menu, there is no trash anymore.
         Button(
             onClick = onAbout,
             colors = ButtonDefaults.buttonColors(containerColor = GoGreen),
@@ -1308,9 +1225,13 @@ fun EditorScreen(
     onCheckProxy: (Profile) -> Unit,
     proxyCheckResult: String?,
     onClearNotice: () -> Unit,
-    proxyStore: ProxyStore
+    proxyStore: ProxyStore,
+    // v2.7.2: new profiles are auto-numbered (Profile 1, 2, 3…) — the
+    // name field is gone from the sheet, so MainScreen passes the next
+    // free number in.
+    nextProfileName: String = "Profile 1"
 ) {
-    var draft by remember { mutableStateOf(initial ?: Profile.new("Profile 1")) }
+    var draft by remember { mutableStateOf(initial ?: Profile.new(nextProfileName)) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val scroll = rememberScrollState()
@@ -1350,6 +1271,9 @@ fun EditorScreen(
                             proxyPort = working.port,
                             proxyUser = "",
                             proxyPass = "",
+                            // v2.7.2: store the proxy country on the draft —
+                            // the card flag reads this, never the language.
+                            proxyCountry = cs.code,
                             // v2.5/v2.6: timezone + language + coordinates
                             // follow the proxy's IP — but only when the
                             // profile's modes say IP-based.
@@ -1383,39 +1307,13 @@ fun EditorScreen(
                         fontWeight = FontWeight.Bold,
                         fontSize = 20.sp
                     )
-                    // Templates (v2.0 Pro): one tap fills the identity below.
-                    Text("Template", style = MaterialTheme.typography.labelLarge, color = GoGreyText)
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        for (t in listOf("Facebook", "Google", "Amazon", "TikTok")) {
-                            FilterChip(
-                                selected = false,
-                                onClick = {
-                                    val filled = applyTemplate(draft, t)
-                                    draft = if (initial == null &&
-                                        (draft.name == "Profile 1" || draft.name.isBlank())
-                                    ) filled.copy(name = t) else filled
-                                },
-                                label = { Text(t) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = Color(0xFFE8EAED),
-                                    containerColor = Color.White
-                                )
-                            )
-                        }
+                    // v2.7.2: no Template chips, no Name/Folder fields —
+                    // a new profile is auto-numbered (Profile 1, 2, 3…)
+                    // and the proxy pick sets its identity. Only the
+                    // useful things stay: proxy + extended settings.
+                    if (initial == null) {
+                        Text("Creating ${draft.name}", color = GoGreyText)
                     }
-                    OutlinedTextField(
-                        value = draft.name, onValueChange = { draft = draft.copy(name = it) },
-                        label = { Text("Name") }, modifier = Modifier.fillMaxWidth(), singleLine = true
-                    )
-                    OutlinedTextField(
-                        value = draft.folder, onValueChange = { draft = draft.copy(folder = it) },
-                        label = { Text("Folder") }, modifier = Modifier.fillMaxWidth(), singleLine = true
-                    )
                     // Proxy row (v2.6): tap opens the country picker.
                     Text("Proxy", fontWeight = FontWeight.Bold)
                     SectionRow(
