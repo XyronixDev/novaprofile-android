@@ -50,6 +50,8 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -93,6 +95,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -159,6 +162,28 @@ fun proxyCountryCode(entryCountry: String): String? {
     return Profile.pickerCountries.firstOrNull {
         Profile.countrySettings(it).label.equals(token, ignoreCase = true)
     }
+}
+
+/**
+ * v2.7.3: parse the manual Add-proxy IP field ("198.165.0.0:8080" or
+ * a bare host — port defaults to 8080). Returns null when the field
+ * cannot be a proxy address; the Add button stays disabled then.
+ */
+fun parseManualIp(raw: String): Pair<String, Int>? {
+    val t = raw.trim()
+    if (t.isEmpty()) return null
+    val lastColon = t.lastIndexOf(':')
+    val host: String
+    val port: Int
+    if (lastColon > 0) {
+        host = t.substring(0, lastColon).trim()
+        port = t.substring(lastColon + 1).trim().toIntOrNull() ?: return null
+    } else {
+        host = t
+        port = 8080
+    }
+    if (host.isEmpty() || port !in 1..65535) return null
+    return host to port
 }
 
 private enum class HomeTab { PROFILES, PROXIES, SETTINGS }
@@ -441,7 +466,7 @@ fun MainScreen(vm: ProfileViewModel = viewModel()) {
             title = { Text("About NovaProfile") },
             text = {
                 Text(
-                    "NovaProfile 2.7.2 Pro — original multi-profile browser.\n\n" +
+                    "NovaProfile 2.7.3 Pro — original multi-profile browser.\n\n" +
                         "• Unlimited profiles, everything free, no billing, no trial.\n" +
                         "• Per-profile cookies, proxy, user-agent, language, " +
                         "screen, WebGL and Canvas settings.\n" +
@@ -804,12 +829,15 @@ private fun ProxiesTab(
     val scope = rememberCoroutineScope()
     var checkingId by remember { mutableStateOf<String?>(null) }
     var assignTarget by remember { mutableStateOf<ProxyEntry?>(null) }
+    // v2.7.3: GoLogin-style manual add — one IP field (host:port),
+    // Protocol (Auto/HTTP/SOCKS5), login, password, proxy name.
     var newName by remember { mutableStateOf("") }
-    var newHost by remember { mutableStateOf("") }
-    var newPort by remember { mutableStateOf("8080") }
-    var newMode by remember { mutableStateOf("HTTP") }
+    var newIp by remember { mutableStateOf("") }
+    var newProtocol by remember { mutableStateOf("Auto") }
     var newUser by remember { mutableStateOf("") }
     var newPass by remember { mutableStateOf("") }
+    var showPass by remember { mutableStateOf(false) }
+    var adding by remember { mutableStateOf(false) }
     var formError by remember { mutableStateOf<String?>(null) }
     // v2.6: the country picker moved into Add profile (user order) —
     // this tab keeps only saved proxies + manual add.
@@ -832,8 +860,17 @@ private fun ProxiesTab(
         TextButton(onClick = { showManual = !showManual }) {
             Text(if (showManual) "Hide manual add" else "Add proxy manually")
         }
-        // Add-proxy form.
+        // Add-proxy form — GoLogin style (v2.7.3): Protocol / IP /
+        // Username / Password / Proxy name. The proxy is TESTED before
+        // it is saved; Auto tries HTTP first, then SOCKS5.
         if (showManual) {
+        // Next auto name ("Myproxy #1", "#2"…) when the name is blank.
+        val suggestedName = run {
+            val max = savedProxies.mapNotNull {
+                Regex("""^Myproxy #(\d+)$""").find(it.name)?.groupValues?.getOrNull(1)?.toIntOrNull()
+            }.maxOrNull() ?: 0
+            "Myproxy #${max + 1}"
+        }
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -844,65 +881,80 @@ private fun ProxiesTab(
         ) {
             Text("Add proxy", fontWeight = FontWeight.Bold)
             Text(
-                "Tip: copy a fast IP:port from hide.me and paste it here, then Test it.",
+                "Tip: copy a fast IP:port from hide.me and paste it here — it is tested before saving.",
                 color = GoGreyText
             )
+            DropDownField(
+                "Protocol", listOf("Auto", "HTTP", "SOCKS5"), newProtocol
+            ) { newProtocol = it }
             OutlinedTextField(
-                value = newName, onValueChange = { newName = it },
-                label = { Text("Name (e.g. US residential)") },
-                modifier = Modifier.fillMaxWidth(), singleLine = true
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                DropDownField(
-                    "Mode", listOf("HTTP", "SOCKS5"), newMode
-                ) { newMode = it }
-            }
-            OutlinedTextField(
-                value = newHost, onValueChange = { newHost = it },
-                label = { Text("Host") },
-                modifier = Modifier.fillMaxWidth(), singleLine = true
-            )
-            OutlinedTextField(
-                value = newPort, onValueChange = { newPort = it },
-                label = { Text("Port") },
+                value = newIp, onValueChange = { newIp = it; formError = null },
+                label = { Text("IP") },
+                placeholder = { Text("198.165.0.0:8080") },
                 modifier = Modifier.fillMaxWidth(), singleLine = true
             )
             OutlinedTextField(
                 value = newUser, onValueChange = { newUser = it },
-                label = { Text("Username (optional)") },
+                label = { Text("Username") },
+                placeholder = { Text("Proxy login") },
                 modifier = Modifier.fillMaxWidth(), singleLine = true
             )
             OutlinedTextField(
                 value = newPass, onValueChange = { newPass = it },
-                label = { Text("Password (optional)") },
+                label = { Text("Password") },
+                placeholder = { Text("Proxy password") },
+                modifier = Modifier.fillMaxWidth(), singleLine = true,
+                visualTransformation = if (showPass) VisualTransformation.None else PasswordVisualTransformation(),
+                trailingIcon = {
+                    IconButton(onClick = { showPass = !showPass }) {
+                        Icon(
+                            if (showPass) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                            contentDescription = if (showPass) "Hide password" else "Show password"
+                        )
+                    }
+                }
+            )
+            OutlinedTextField(
+                value = newName, onValueChange = { newName = it },
+                label = { Text("Proxy name") },
+                placeholder = { Text(suggestedName) },
                 modifier = Modifier.fillMaxWidth(), singleLine = true
             )
             formError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             Button(
                 onClick = {
-                    val port = newPort.toIntOrNull()
-                    when {
-                        newName.isBlank() -> formError = "Name is required."
-                        newHost.isBlank() -> formError = "Host is required."
-                        port == null || port !in 1..65535 -> formError = "Port must be 1–65535."
-                        else -> {
-                            proxyStore.add(
-                                ProxyEntry(
-                                    name = newName.trim(),
-                                    mode = newMode,
-                                    host = newHost.trim(),
-                                    port = port,
-                                    user = newUser.trim(),
-                                    pass = newPass
-                                )
-                            )
-                            newName = ""; newHost = ""; newPort = "8080"
-                            newUser = ""; newPass = ""; formError = null
+                    val parsed = parseManualIp(newIp) ?: return@Button
+                    val (host, port) = parsed
+                    val name = newName.trim().ifBlank { suggestedName }
+                    adding = true
+                    formError = null
+                    scope.launch {
+                        val base = ProxyEntry(
+                            name = name, mode = "HTTP", host = host, port = port,
+                            user = newUser.trim(), pass = newPass
+                        )
+                        val modes = if (newProtocol == "Auto") listOf("HTTP", "SOCKS5") else listOf(newProtocol)
+                        var checked: ProxyEntry? = null
+                        for (m in modes) {
+                            val attempt = proxyStore.check(base.copy(mode = m))
+                            checked = attempt
+                            if (attempt.ok) break
                         }
+                        if (checked != null && checked.ok) {
+                            proxyStore.add(checked)
+                            newIp = ""; newUser = ""; newPass = ""; newName = ""
+                            formError = null
+                            showManual = false
+                        } else {
+                            formError = "Proxy did not answer — check the IP:port and login, then try again."
+                        }
+                        adding = false
                     }
                 },
-                colors = ButtonDefaults.buttonColors(containerColor = GoGreen)
-            ) { Text("Save proxy") }
+                enabled = !adding && parseManualIp(newIp) != null,
+                colors = ButtonDefaults.buttonColors(containerColor = GoGreen),
+                modifier = Modifier.fillMaxWidth()
+            ) { Text(if (adding) "Testing…" else "Add proxy") }
         }
         }
 
