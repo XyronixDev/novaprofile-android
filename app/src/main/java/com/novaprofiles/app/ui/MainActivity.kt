@@ -40,6 +40,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -439,7 +440,7 @@ fun MainScreen(vm: ProfileViewModel = viewModel()) {
             title = { Text("About NovaProfile") },
             text = {
                 Text(
-                    "NovaProfile 2.5.0 Pro — original multi-profile browser.\n\n" +
+                    "NovaProfile 2.7.1 Pro — original multi-profile browser.\n\n" +
                         "• Unlimited profiles, everything free, no billing, no trial.\n" +
                         "• Per-profile cookies, proxy, user-agent, language, " +
                         "screen, WebGL and Canvas settings.\n" +
@@ -1566,6 +1567,7 @@ private fun ProxyPickerView(
         ) {
             for (code in Profile.pickerCountries) {
                 val cs = Profile.countrySettings(code)
+                val expanded = connectingCountry == code || pickedCode == code
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1606,50 +1608,59 @@ private fun ProxyPickerView(
                     Spacer(Modifier.width(12.dp))
                     Text(cs.label, modifier = Modifier.weight(1f))
                     Icon(
-                        Icons.Filled.ChevronRight,
+                        if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.ChevronRight,
                         contentDescription = null,
                         tint = GoGreyText
                     )
                 }
+                // v2.7.1: search + result expand UNDER the tapped country
+                // (user order) — no more result card pinned at the bottom.
+                if (expanded) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .background(GoDivider)
+                    )
+                    if (connectingCountry == code) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(countryStatus ?: "Checking…", color = GoGreyText)
+                        }
+                    } else if (pickedCode == code && pickedProxy != null) {
+                        val wp = pickedProxy!!
+                        Column(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                "Proxy is ok! • ${wp.lastIp} • ${wp.lastMs} ms" +
+                                    (if (wp.lastTimezone.isNotBlank()) " • ${wp.lastTimezone}" else ""),
+                                color = GoGreenDark,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text("HTTP • Free", color = GoGreyText)
+                            Button(
+                                onClick = { onPicked(wp, cs) },
+                                colors = ButtonDefaults.buttonColors(containerColor = GoGreen),
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Add proxy") }
+                        }
+                    } else if (pickedCode == code) {
+                        pickingError?.let {
+                            Text(
+                                it,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                            )
+                        }
+                    }
+                }
             }
-        }
-        if (connectingCountry != null) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                CircularProgressIndicator(modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(countryStatus ?: "Checking…", color = GoGreyText)
-            }
-        } else if (pickedProxy != null && pickedCode != null) {
-            val wp = pickedProxy!!
-            val cs = Profile.countrySettings(pickedCode!!)
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .border(1.dp, GoDivider, RoundedCornerShape(12.dp))
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    "Selected proxy: ${Profile.flagEmoji(pickedCode!!)} ${cs.label} • Free",
-                    fontWeight = FontWeight.Bold
-                )
-                Text("HTTP", color = GoGreyText)
-                Text(
-                    "Proxy is ok! • ${wp.lastIp} • ${wp.lastMs} ms" +
-                        (if (wp.lastTimezone.isNotBlank()) " • ${wp.lastTimezone}" else ""),
-                    color = GoGreenDark,
-                    fontWeight = FontWeight.Bold
-                )
-                Button(
-                    onClick = { onPicked(wp, cs) },
-                    colors = ButtonDefaults.buttonColors(containerColor = GoGreen),
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Add proxy") }
-            }
-        } else {
-            pickingError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            countryStatus?.let { Text(it, color = GoGreyText) }
         }
         Spacer(Modifier.height(24.dp))
     }

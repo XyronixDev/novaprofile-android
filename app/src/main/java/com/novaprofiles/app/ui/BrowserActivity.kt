@@ -62,7 +62,10 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -101,7 +104,9 @@ import com.novaprofiles.app.util.FingerprintJs
 import com.novaprofiles.app.util.ProxyHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.resume
 import java.net.URL
 import java.net.URLEncoder
 
@@ -144,6 +149,9 @@ class BrowserActivity : ComponentActivity() {
     private var suffixApplied = false
     private var setupStatus by mutableStateOf<String?>(null)
     private var setupDone = false
+    // v2.7.1 fail-closed proxy gate — set before setContent.
+    private var proxyFailed by mutableStateOf(false)
+    private var allowDirect by mutableStateOf(false)
 
     /** One tab: own WebView, own URL/title, own desktop + incognito flags. */
     inner class BrowserTab(val id: Int) {
@@ -202,24 +210,48 @@ class BrowserActivity : ComponentActivity() {
             } catch (e: Exception) {
                 suffixApplied = false
             }
-            // Restore cookies + apply proxy once per profile run.
-            val saved = CookieStore.deserialize(profile.cookiesData)
-            CookieStore.restore(saved) {
-                ProxyHelper.apply(
-                    profile,
-                    ContextCompat.getMainExecutor(this@BrowserActivity)
-                ) { applied ->
-                    setupStatus = buildString {
-                        append(if (suffixApplied) "Isolated storage: on" else "Isolated storage: shared (process already used)")
-                        append(" • Proxy: ")
-                        append(if (applied) ProxyHelper.summary(profile) else "unavailable")
+            // v2.7.1 FIX (user's whoer screenshots proved it): the proxy
+            // override MUST be in place BEFORE the first WebView exists.
+            // The old code called setContent immediately while the
+            // override was still pending, so the first WebView was
+            // created with a direct connection — the browser showed the
+            // REAL IP even though the proxy test said "Proxy is ok!".
+            // Now we WAIT for cookies + proxy, and if a configured proxy
+            // fails to apply we do NOT open the browser direct
+            // (fail-closed): an error screen offers Retry, or opening
+            // without the proxy only on the user's explicit tap. No
+            // silent IP leak.
+            val proxyApplied = suspendCancellableCoroutine { cont ->
+                val saved = CookieStore.deserialize(profile.cookiesData)
+                CookieStore.restore(saved) {
+                    ProxyHelper.apply(
+                        profile,
+                        ContextCompat.getMainExecutor(this@BrowserActivity)
+                    ) { applied ->
+                        if (cont.isActive) cont.resume(applied)
                     }
-                    setupDone = true
                 }
             }
+            val needsProxy = profile.proxyMode != "NONE" && profile.proxyHost.isNotBlank()
+            proxyFailed = needsProxy && !proxyApplied
+            setupStatus = buildString {
+                append(if (suffixApplied) "Isolated storage: on" else "Isolated storage: shared (process already used)")
+                append(" • Proxy: ")
+                append(if (proxyApplied) ProxyHelper.summary(profile) else "unavailable")
+            }
+            setupDone = true
             setContent {
                 NovaProfileTheme {
-                    BrowserScreen(profile = profile)
+                    if (proxyFailed && !allowDirect) {
+                        ProxyFailedScreen(
+                            profile = profile,
+                            onRetry = { recreate() },
+                            onOpenDirect = { allowDirect = true },
+                            onClose = { finish() }
+                        )
+                    } else {
+                        BrowserScreen(profile = profile)
+                    }
                 }
             }
         }
@@ -385,6 +417,48 @@ class BrowserActivity : ComponentActivity() {
 
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
+    /** v2.7.1 fail-closed screen: a configured proxy that could not be
+     * applied must never silently fall back to a direct connection. */
+    @Composable
+    fun ProxyFailedScreen(
+        profile: Profile,
+        onRetry: () -> Unit,
+        onOpenDirect: () -> Unit,
+        onClose: () -> Unit
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Icon(
+                Icons.Filled.Warning,
+                contentDescription = null,
+                tint = Color(0xFFB3261E),
+                modifier = Modifier.size(32.dp)
+            )
+            Text("Proxy apply nahi hua", fontWeight = FontWeight.Bold, fontSize = 20.sp)
+            Text(
+                "Is profile ka proxy (${ProxyHelper.summary(profile)}) browser " +
+                    "par lag nahi saka. Browser direct khulne se aapka asli IP " +
+                    "dikh jayega — is liye browser nahi khola gaya.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Button(
+                onClick = onRetry,
+                colors = ButtonDefaults.buttonColors(containerColor = GoGreen),
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Retry") }
+            TextButton(onClick = onOpenDirect, modifier = Modifier.fillMaxWidth()) {
+                Text("Open without proxy (apna asli IP dikhega)")
+            }
+            TextButton(onClick = onClose, modifier = Modifier.fillMaxWidth()) {
+                Text("Close")
+            }
+        }
+    }
+
     fun BrowserScreen(profile: Profile) {
         val context = LocalContext.current
         if (tabs.isEmpty()) {
