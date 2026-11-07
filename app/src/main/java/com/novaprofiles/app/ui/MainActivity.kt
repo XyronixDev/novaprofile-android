@@ -86,6 +86,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import com.novaprofiles.app.util.ProxyEntry
 import com.novaprofiles.app.util.ProxyStore
+import com.novaprofiles.app.util.SettingsStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
@@ -94,6 +95,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -191,6 +193,7 @@ fun MainScreen(vm: ProfileViewModel = viewModel()) {
     var searchOpen by remember { mutableStateOf(false) }
     var labProfile by remember { mutableStateOf<Profile?>(null) }
     val proxyStore = remember { ProxyStore(ctx) }
+    val settingsStore = remember { SettingsStore(ctx) }
     val scope = rememberCoroutineScope()
 
     /** Sessions (v2.0 Pro): tell a running browser to stop itself. */
@@ -397,6 +400,8 @@ fun MainScreen(vm: ProfileViewModel = viewModel()) {
                 )
                 HomeTab.SETTINGS -> SettingsTab(
                     profiles = profiles,
+                    proxyStore = proxyStore,
+                    settingsStore = settingsStore,
                     onOpenLab = { labProfile = it },
                     trashCount = trash.size,
                     onExport = { exportLauncher.launch("novaprofile-profiles.zip") },
@@ -909,6 +914,10 @@ private fun ProxiesTab(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text("Add proxy", fontWeight = FontWeight.Bold)
+            Text(
+                "Tip: copy a fast IP:port from hide.me and paste it here, then Test it.",
+                color = GoGreyText
+            )
             OutlinedTextField(
                 value = newName, onValueChange = { newName = it },
                 label = { Text("Name (e.g. US residential)") },
@@ -1091,6 +1100,8 @@ private fun ProxiesTab(
 @Composable
 private fun SettingsTab(
     profiles: List<Profile>,
+    proxyStore: ProxyStore,
+    settingsStore: SettingsStore,
     onOpenLab: (Profile) -> Unit,
     trashCount: Int,
     onExport: () -> Unit,
@@ -1153,6 +1164,93 @@ private fun SettingsTab(
             Spacer(Modifier.width(8.dp))
             Text("About NovaProfile")
         }
+        // v2.7: Webshare (optional) — free plan = 10 stable proxies +
+        // 1GB/month, renewing monthly. The user creates an API key in
+        // the Webshare dashboard (Integrations -> API Keys) and pastes
+        // it here; the key stays on this phone (DataStore) and is sent
+        // only to Webshare's own API. Paid ($2.99/mo) is optional and
+        // never required: a free-plan key works exactly the same way.
+        // Free Webshare proxies are shared datacenter IPs — stable, but
+        // the whoer ~90% ceiling still applies.
+        val wsScope = rememberCoroutineScope()
+        val savedWsKey by settingsStore.webshareApiKey.collectAsState(initial = "")
+        var wsKey by remember { mutableStateOf("") }
+        var wsStatus by remember { mutableStateOf<String?>(null) }
+        var wsFetching by remember { mutableStateOf(false) }
+        Spacer(Modifier.height(4.dp))
+        Text("Webshare (optional)", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        Text(
+            "Stable proxies from Webshare: free plan gives 10 proxies + " +
+                "1GB/month (renews monthly). Create an API key at " +
+                "dashboard.webshare.io → Integrations → API Keys and " +
+                "paste it here. The key stays on this phone. Paid " +
+                "($2.99/mo) is optional — a free key works the same.",
+            color = GoGreyText
+        )
+        if (savedWsKey.isNotBlank()) {
+            Text("Key saved ✓", color = GoGreen)
+        }
+        OutlinedTextField(
+            value = wsKey,
+            onValueChange = { wsKey = it },
+            label = { Text("Webshare API key (optional)") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation()
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = {
+                    wsScope.launch {
+                        settingsStore.setWebshareApiKey(wsKey.trim())
+                        wsStatus = "Key saved on this phone."
+                    }
+                },
+                enabled = wsKey.isNotBlank(),
+                colors = ButtonDefaults.buttonColors(containerColor = GoGreen),
+                modifier = Modifier.weight(1f)
+            ) { Text("Save key") }
+            Button(
+                onClick = {
+                    wsScope.launch {
+                        wsFetching = true
+                        wsStatus = "Fetching from Webshare…"
+                        val key = wsKey.ifBlank { savedWsKey }
+                        val list = proxyStore.fetchWebshareProxies(key)
+                        wsFetching = false
+                        if (list.isEmpty()) {
+                            wsStatus = "Nothing fetched — check the API key and try again."
+                        } else {
+                            val existing = proxyStore.proxies.value
+                                .map { "${it.host}:${it.port}" }.toSet()
+                            var added = 0
+                            for (e in list) {
+                                if ("${e.host}:${e.port}" !in existing) {
+                                    proxyStore.add(e)
+                                    added++
+                                }
+                            }
+                            val us = list.count { it.country.startsWith("US") }
+                            wsStatus = "Webshare: ${list.size} proxies found " +
+                                "($us US), $added new saved." +
+                                if (added == 0) " All were already saved." else ""
+                        }
+                    }
+                },
+                enabled = !wsFetching && (wsKey.isNotBlank() || savedWsKey.isNotBlank()),
+                colors = ButtonDefaults.buttonColors(containerColor = GoGreen),
+                modifier = Modifier.weight(1f)
+            ) { Text(if (wsFetching) "Fetching…" else "Fetch my proxies") }
+        }
+        if (savedWsKey.isNotBlank()) {
+            TextButton(onClick = {
+                wsScope.launch {
+                    settingsStore.setWebshareApiKey("")
+                    wsStatus = "Key cleared."
+                }
+            }) { Text("Clear saved key") }
+        }
+        wsStatus?.let { Text(it, color = GoGreyText) }
         notice?.let { Text(it, color = GoGreyText) }
         Spacer(Modifier.height(8.dp))
         Text(
