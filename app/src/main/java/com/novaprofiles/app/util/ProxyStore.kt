@@ -81,8 +81,12 @@ class ProxyStore(context: Context) {
     }
 
     private fun persist(list: List<ProxyEntry>) {
+        // v2.7.2 safety net: drop any host:port duplicates already on
+        // the phone (keep the last entry for each), so old duplicates
+        // disappear on the next write even if they predate add()'s fix.
+        val deduped = list.reversed().distinctBy { it.host to it.port }.reversed()
         val arr = JSONArray()
-        for (p in list) {
+        for (p in deduped) {
             arr.put(
                 JSONObject().apply {
                     put("id", p.id)
@@ -103,11 +107,20 @@ class ProxyStore(context: Context) {
             )
         }
         prefs.edit().putString("list", arr.toString()).apply()
-        _proxies.value = list
+        _proxies.value = deduped
     }
 
+    // v2.7.2: same proxy picked twice must not stack up as two saved
+    // entries (the phone showed 3x "Free IN 10"). Adding a host:port
+    // that is already saved replaces it in place with the fresh test
+    // result instead of appending a duplicate.
     fun add(entry: ProxyEntry) {
-        persist(_proxies.value + entry)
+        val existing = _proxies.value.firstOrNull { it.host == entry.host && it.port == entry.port }
+        if (existing != null) {
+            persist(_proxies.value.map { if (it.id == existing.id) entry.copy(id = existing.id) else it })
+        } else {
+            persist(_proxies.value + entry)
+        }
     }
 
     fun remove(id: String) {
