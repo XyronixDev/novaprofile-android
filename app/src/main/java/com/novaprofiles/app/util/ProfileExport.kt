@@ -39,6 +39,7 @@ object ProfileExport {
         put("proxyPort", p.proxyPort)
         put("proxyUser", p.proxyUser)
         put("proxyPass", p.proxyPass)
+        put("proxyCountry", p.proxyCountry)
         put("canvasMode", p.canvasMode)
         put("webglVendor", p.webglVendor)
         put("webglRenderer", p.webglRenderer)
@@ -81,6 +82,7 @@ object ProfileExport {
         proxyPort = o.optInt("proxyPort", 8080),
         proxyUser = o.optString("proxyUser", ""),
         proxyPass = o.optString("proxyPass", ""),
+        proxyCountry = o.optString("proxyCountry", ""),
         canvasMode = o.optString("canvasMode", "noise"),
         webglVendor = o.optString("webglVendor", ""),
         webglRenderer = o.optString("webglRenderer", ""),
