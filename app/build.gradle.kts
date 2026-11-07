@@ -43,8 +43,8 @@ android {
         applicationId = "com.novaprofiles.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 12
-        versionName = "2.7.2"
+        versionCode = 13
+        versionName = "2.7.3"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
