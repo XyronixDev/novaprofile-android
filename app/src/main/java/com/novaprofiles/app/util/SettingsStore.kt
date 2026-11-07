@@ -20,6 +20,10 @@ class SettingsStore(private val context: Context) {
         private val KEY_SHOW_TRASH = booleanPreferencesKey("show_trash")
         private val KEY_PROXY_CHECK_URL = stringPreferencesKey("proxy_check_url")
         private val KEY_DEFAULT_FOLDER = stringPreferencesKey("default_folder")
+        // v2.7: Webshare API key. Stored only on this phone (DataStore),
+        // sent only to Webshare's own API. The free-plan key and a paid
+        // key work the same way — paid is optional, never required.
+        private val KEY_WEBSHARE_API_KEY = stringPreferencesKey("webshare_api_key")
     }
 
     val showTrash: Flow<Boolean> = context.dataStore.data.map { it[KEY_SHOW_TRASH] ?: false }
@@ -27,6 +31,8 @@ class SettingsStore(private val context: Context) {
         context.dataStore.data.map { it[KEY_PROXY_CHECK_URL] ?: "https://api.ipify.org" }
     val defaultFolder: Flow<String> =
         context.dataStore.data.map { it[KEY_DEFAULT_FOLDER] ?: "General" }
+    val webshareApiKey: Flow<String> =
+        context.dataStore.data.map { it[KEY_WEBSHARE_API_KEY] ?: "" }
 
     suspend fun setShowTrash(v: Boolean) {
         context.dataStore.edit { it[KEY_SHOW_TRASH] = v }
@@ -38,5 +44,9 @@ class SettingsStore(private val context: Context) {
 
     suspend fun setDefaultFolder(v: String) {
         context.dataStore.edit { it[KEY_DEFAULT_FOLDER] = v }
+    }
+
+    suspend fun setWebshareApiKey(v: String) {
+        context.dataStore.edit { it[KEY_WEBSHARE_API_KEY] = v }
     }
 }

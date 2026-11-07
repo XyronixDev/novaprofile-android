@@ -7,6 +7,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
+import com.novaprofiles.app.data.Profile
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -123,10 +124,12 @@ class ProxyStore(context: Context) {
      *
      * v2.3 lesson (measured 2026-11-07: 14/14 free proxies from the old
      * single source were dead — TCP open, CONNECT refused/hung): one
-     * source is never enough. This merges THREE sources in parallel —
+     * source is never enough. This merges FOUR sources in parallel —
      * Geonode (tested, latency-sorted, elite only), ProxyScrape (country
-     * filtered), GitHub raw list as last resort — dedupes, and returns
-     * up to [limit] candidates for parallel testing. Free proxies are
+     * filtered), free-proxy-list.net (plain HTML table, elite/anonymous
+     * only, country filtered) — dedupes, and returns up to [limit]
+     * candidates for parallel testing. GitHub raw list stays as the
+     * last resort when all three return nothing. Free proxies are
      * still best-effort: most die within hours, so the caller must test
      * them (see checkFirstWorking) and the user may need to retry.
      */
@@ -164,7 +167,46 @@ class ProxyStore(context: Context) {
                     emptyList()
                 }
             }
-            val merged = (geonode.await() + scrape.await())
+            // v2.7: free-proxy-list.net — a plain server-rendered HTML
+            // table (verified 2026-11-07: ~300 rows, IPs in plain text,
+            // "Last Checked" seconds ago). No API, no speed column, HTTP
+            // only — the parallel test is what proves speed. The row
+            // pattern tolerates class attributes on every <td>.
+            val fpl = async {
+                try {
+                    val conn = URL("https://free-proxy-list.net/")
+                        .openConnection() as HttpURLConnection
+                    conn.connectTimeout = 10_000
+                    conn.readTimeout = 10_000
+                    conn.setRequestProperty(
+                        "User-Agent",
+                        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 " +
+                            "(KHTML, like Gecko) Chrome/151.0.0.0 Mobile Safari/537.36"
+                    )
+                    if (conn.responseCode != 200) {
+                        conn.disconnect()
+                        return@async emptyList()
+                    }
+                    val html = conn.inputStream.bufferedReader().readText()
+                    conn.disconnect()
+                    val rowRe = Regex(
+                        "<tr><td>(\\d+\\.\\d+\\.\\d+\\.\\d+)</td><td>(\\d+)</td>" +
+                            "<td>([A-Z]{2})</td><td[^>]*>([^<]*)</td><td[^>]*>([^<]*)</td>"
+                    )
+                    rowRe.findAll(html).mapNotNull { m ->
+                        val (ip, port, code, _, anon) = m.destructured
+                        if (code != cc) return@mapNotNull null
+                        val a = anon.lowercase()
+                        if (!a.contains("elite") && !a.contains("anonymous")) {
+                            return@mapNotNull null
+                        }
+                        "$ip:$port"
+                    }.take(10).toList()
+                } catch (e: Exception) {
+                    emptyList()
+                }
+            }
+            val merged = (geonode.await() + scrape.await() + fpl.await())
                 .map { it.trim() }.filter { it.contains(":") }.distinct()
             val source = if (merged.isNotEmpty()) merged else try {
                 URL("https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt")
@@ -182,6 +224,67 @@ class ProxyStore(context: Context) {
                     host = parts[0],
                     port = port
                 )
+            }
+        }
+
+    /**
+     * v2.7: Webshare proxies via the official API. Free plan = 10 stable
+     * proxies + 1GB/month, renewing monthly; paid ($2.99/mo) is optional
+     * and never required — a free-plan key works exactly the same way.
+     * The user creates an API key in the Webshare dashboard
+     * (Integrations -> API Keys) and pastes it into Settings; the key is
+     * stored only on this phone (DataStore) and is sent only to
+     * Webshare's own API. Direct mode: connect to proxy_address + port
+     * with the per-proxy username/password the API returns. Defensive
+     * parsing: every field is opt* with fallbacks, so an API shape
+     * change degrades to an empty list, never a crash — and a wrong key
+     * (non-200) also returns empty, which the UI reports as "check the
+     * key". Free Webshare proxies are shared datacenter IPs: stable,
+     * but the whoer ~90% ceiling still applies (residential needed for
+     * 100%) and heavy use eats the 1GB cap.
+     */
+    suspend fun fetchWebshareProxies(apiKey: String): List<ProxyEntry> =
+        withContext(Dispatchers.IO) {
+            if (apiKey.isBlank()) return@withContext emptyList()
+            try {
+                val conn = URL(
+                    "https://proxy.webshare.io/api/v2/proxy/list/" +
+                        "?mode=direct&page=1&page_size=100"
+                ).openConnection() as HttpURLConnection
+                conn.connectTimeout = 15_000
+                conn.readTimeout = 15_000
+                conn.setRequestProperty("Authorization", "Token ${apiKey.trim()}")
+                conn.setRequestProperty("Accept", "application/json")
+                if (conn.responseCode != 200) {
+                    conn.disconnect()
+                    return@withContext emptyList()
+                }
+                val body = conn.inputStream.bufferedReader().readText()
+                conn.disconnect()
+                val arr = JSONObject(body).optJSONArray("results")
+                    ?: return@withContext emptyList()
+                (0 until arr.length()).mapNotNull { i ->
+                    val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                    val host = o.optString("proxy_address").ifBlank { o.optString("ip") }
+                    val port = o.optInt("port", 0)
+                    if (host.isBlank() || port <= 0) return@mapNotNull null
+                    if (!o.optBoolean("valid", true)) return@mapNotNull null
+                    val cc = o.optString("country_code").uppercase()
+                    val label = if (cc.isBlank()) "" else Profile.countrySettings(cc).label
+                    ProxyEntry(
+                        name = "Webshare • " + label.ifBlank { host },
+                        // Dashboard quick-start uses HTTP; the same port
+                        // also speaks SOCKS5, but HTTP is the safe default.
+                        mode = "HTTP",
+                        host = host,
+                        port = port,
+                        user = o.optString("username"),
+                        pass = o.optString("password"),
+                        country = if (cc.isBlank()) "" else "$cc • $label"
+                    )
+                }
+            } catch (e: Exception) {
+                emptyList()
             }
         }
 
