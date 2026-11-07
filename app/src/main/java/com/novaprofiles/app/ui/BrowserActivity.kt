@@ -512,17 +512,9 @@ class BrowserActivity : ComponentActivity() {
                     .padding(horizontal = 8.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Green "N" mark (own mark, green family of the reference).
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(GoGreen),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("N", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                }
-                Spacer(Modifier.width(8.dp))
+                // v2.7.2: the green "N" box is gone from the browser bar
+                // (user order — it squeezed the address pill); the pill
+                // now gets the full width, like Chrome.
                 // Address pill (editable).
                 Row(
                     modifier = Modifier
