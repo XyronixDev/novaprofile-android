@@ -39,6 +39,13 @@ data class Profile(
     val proxyPort: Int = 8080,
     val proxyUser: String = "",
     val proxyPass: String = "",
+    // v2.7.2: the proxy's 2-letter country code (e.g. "CA"). The home
+    // card used to guess the flag from the language — but the language
+    // only updates when the country parse succeeds, so after an Assign
+    // the card kept showing the OLD country while the proxy had already
+    // changed. Storing the code on the profile makes the card show the
+    // real proxy country, always.
+    val proxyCountry: String = "",
 
     // Fingerprint (JS-level overrides, see util/FingerprintJs.kt)
     val canvasMode: String = "noise",
