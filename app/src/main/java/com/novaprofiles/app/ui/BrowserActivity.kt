@@ -415,8 +415,6 @@ class BrowserActivity : ComponentActivity() {
         }
     }
 
-    @OptIn(ExperimentalMaterial3Api::class)
-    @Composable
     /** v2.7.1 fail-closed screen: a configured proxy that could not be
      * applied must never silently fall back to a direct connection. */
     @Composable
@@ -459,6 +457,8 @@ class BrowserActivity : ComponentActivity() {
         }
     }
 
+    @OptIn(ExperimentalMaterial3Api::class)
+    @Composable
     fun BrowserScreen(profile: Profile) {
         val context = LocalContext.current
         if (tabs.isEmpty()) {
