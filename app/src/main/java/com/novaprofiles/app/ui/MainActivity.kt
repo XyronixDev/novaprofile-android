@@ -108,6 +108,7 @@ import com.novaprofiles.app.util.ProxyStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
@@ -2068,7 +2069,7 @@ private fun AddProxyScreen(
                         testAllRunning = true
                         status = "Testing ${savedProxies.size} proxies…"
                         scope.launch {
-                            val results = savedProxies.map { async { proxyStore.check(it) } }.awaitAll()
+                            val results = savedProxies.map { entry -> async { proxyStore.check(entry) } }.awaitAll()
                             results.forEach { proxyStore.update(it) }
                             testAllRunning = false
                             status = "Tested ${results.size} — ${results.count { it.ok }} working"
