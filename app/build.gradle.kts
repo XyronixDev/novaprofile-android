@@ -43,8 +43,8 @@ android {
         applicationId = "com.novaprofiles.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 13
-        versionName = "2.7.3"
+        versionCode = 20104000
+        versionName = "2.8.24"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -96,6 +96,8 @@ android {
 
     buildFeatures {
         compose = true
+        // v2.8.24: the Settings screen shows the REAL version from BuildConfig.
+        buildConfig = true
     }
 }
 
