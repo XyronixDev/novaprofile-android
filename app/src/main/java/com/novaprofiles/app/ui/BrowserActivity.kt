@@ -503,7 +503,7 @@ class BrowserActivity : ComponentActivity() {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(GoBrowserBar)
+                .background(GoHeaderDark)
         ) {
             // ---- Chrome-like top bar ----
             Row(
@@ -512,15 +512,17 @@ class BrowserActivity : ComponentActivity() {
                     .padding(horizontal = 8.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // v2.7.2: the green "N" box is gone from the browser bar
-                // (user order — it squeezed the address pill); the pill
-                // now gets the full width, like Chrome.
+                // v2.8.24: no logo glyph in the browser top bar — the
+                // v2.7.2 user order removed the green "N" box because it
+                // squeezed the address pill; a bare glyph would do the
+                // same. Premium green chrome only; the infinity logo
+                // lives in the profile-manager header.
                 // Address pill (editable).
                 Row(
                     modifier = Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(24.dp))
-                        .background(GoBrowserPill)
+                        .background(GoHeaderWave)
                         .padding(horizontal = 12.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -592,7 +594,7 @@ class BrowserActivity : ComponentActivity() {
                             fontSize = 15.sp,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(6.dp))
-                                .background(GoBrowserPill)
+                                .background(GoHeaderWave)
                                 .padding(horizontal = 6.dp, vertical = 1.dp)
                         )
                     }
@@ -791,7 +793,7 @@ class BrowserActivity : ComponentActivity() {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(GoBrowserBar)
+                    .background(GoHeaderDark)
                     .padding(horizontal = 4.dp, vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
