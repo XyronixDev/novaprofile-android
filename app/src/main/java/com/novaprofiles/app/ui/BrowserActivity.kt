@@ -503,7 +503,7 @@ class BrowserActivity : ComponentActivity() {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(GoHeaderDark)
+                .background(GoBrowserBar)
         ) {
             // ---- Chrome-like top bar ----
             Row(
@@ -512,17 +512,16 @@ class BrowserActivity : ComponentActivity() {
                     .padding(horizontal = 8.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // v2.8.24: no logo glyph in the browser top bar — the
-                // v2.7.2 user order removed the green "N" box because it
-                // squeezed the address pill; a bare glyph would do the
-                // same. Premium green chrome only; the infinity logo
-                // lives in the profile-manager header.
+                // v2.8.25: browser chrome is back to the ORIGINAL colors
+                // (GoBrowserBar / GoBrowserPill) — the v2.8.24 premium
+                // green chrome is reverted by user order ("pehle jesa
+                // browser"). No logo glyph in the top bar (v2.7.2 order).
                 // Address pill (editable).
                 Row(
                     modifier = Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(24.dp))
-                        .background(GoHeaderWave)
+                        .background(GoBrowserPill)
                         .padding(horizontal = 12.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -532,7 +531,7 @@ class BrowserActivity : ComponentActivity() {
                         value = urlText,
                         onValueChange = { urlText = it },
                         modifier = Modifier.weight(1f),
-                        placeholder = { Text("Search or type URL", color = Color(0xFFBDC1C6)) },
+                        placeholder = { Text("Search or type URL", color = Color(0xFFBDC1C6), maxLines = 1, softWrap = false) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
                         keyboardActions = KeyboardActions(
@@ -592,9 +591,11 @@ class BrowserActivity : ComponentActivity() {
                             color = Color.White,
                             fontWeight = FontWeight.Bold,
                             fontSize = 15.sp,
+                            maxLines = 1,
+                            softWrap = false,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(6.dp))
-                                .background(GoHeaderWave)
+                                .background(GoBrowserPill)
                                 .padding(horizontal = 6.dp, vertical = 1.dp)
                         )
                     }
@@ -789,11 +790,11 @@ class BrowserActivity : ComponentActivity() {
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                 )
             }
-            // ---- Bottom bar ----
+            // ---- Bottom bar (v2.8.25: original GoBrowserBar, as before) ----
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(GoHeaderDark)
+                    .background(GoBrowserBar)
                     .padding(horizontal = 4.dp, vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
