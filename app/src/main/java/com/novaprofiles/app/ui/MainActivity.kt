@@ -399,7 +399,10 @@ fun MainScreen(vm: ProfileViewModel = viewModel()) {
         val max = profiles.mapNotNull {
             Regex("""^Profile (\d+)$""").find(it.name)?.groupValues?.getOrNull(1)?.toIntOrNull()
         }.maxOrNull() ?: 0
-        draft = Profile.new("Profile ${max + 1}")
+        // v2.8.25: Add starts with an EMPTY name — the reference shows
+        // the "Enter profile name..." placeholder with 0/50, not a
+        // pre-filled "Profile N". (Profile.new() would re-fill it.)
+        draft = Profile.new("Profile ${max + 1}").copy(name = "")
         editingId = null
         route = HomeRoute.FORM
     }
@@ -728,35 +731,36 @@ private fun InfinityLogo(color: Color, fontSize: Int) {
         color = color,
         fontSize = fontSize.sp,
         fontWeight = FontWeight.Bold,
-        maxLines = 1
+        maxLines = 1,
+        softWrap = false
     )
 }
 
-/** v2.8.24: the gold Premium pill (decorative text only — no paywall). */
+/** v2.8.25: the gold Premium pill (decorative text only — no paywall). One line, never wrapped. */
 @Composable
 private fun PremiumPill() {
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(20.dp))
             .border(1.5.dp, GoGold, RoundedCornerShape(20.dp))
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .padding(horizontal = 10.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text("♛", color = GoGold, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        Text("♛", color = GoGold, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
         Spacer(Modifier.width(4.dp))
-        Text("Premium", color = GoGold, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        Text("Premium", color = GoGold, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
     }
 }
 
-/** v2.8.24: the "NovaProfile / Anti-Detect Browser" title block. */
+/** v2.8.25: the "NovaProfile / Anti-Detect Browser" title block. One line each, never wrapped. */
 @Composable
-private fun BrandTitle() {
-    Column {
+private fun BrandTitle(modifier: Modifier = Modifier) {
+    Column(modifier) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Nova", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-            Text("Profile", color = GoGreen, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            Text("Nova", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
+            Text("Profile", color = GoGreen, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
         }
-        Text("Anti-Detect Browser", color = Color.White, fontSize = 13.sp)
+        Text("Anti-Detect Browser", color = Color.White, fontSize = 12.sp, maxLines = 1, softWrap = false)
     }
 }
 
@@ -782,7 +786,7 @@ private fun PremiumHeader(
         if (showBack) {
             Box(
                 modifier = Modifier
-                    .size(44.dp)
+                    .size(40.dp)
                     .clip(CircleShape)
                     .background(Color.White.copy(alpha = 0.12f))
                     .clickable(onClick = onBack),
@@ -790,7 +794,7 @@ private fun PremiumHeader(
             ) {
                 Icon(Icons.Filled.ArrowBack, null, tint = Color.White, modifier = Modifier.size(24.dp))
             }
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(8.dp))
         }
         if (logoInCircle) {
             Box(
@@ -803,10 +807,12 @@ private fun PremiumHeader(
                 InfinityLogo(color = Color.White, fontSize = 34)
             }
         } else {
-            InfinityLogo(color = GoGreen, fontSize = 40)
+            InfinityLogo(color = GoGreen, fontSize = 34)
         }
-        Spacer(Modifier.width(10.dp))
-        BrandTitle()
+        Spacer(Modifier.width(8.dp))
+        // v2.8.25: the title yields to the Premium pill — the pill keeps
+        // its full width, so "Premium" can never wrap to "Premiu m".
+        BrandTitle(Modifier.weight(1f, fill = false))
         Spacer(Modifier.weight(1f))
         if (onBell != null) {
             Box(
@@ -932,8 +938,10 @@ private fun BottomNavItem(
 }
 
 /**
- * v2.8.24: the dark pill tabs on the Profiles list — "Profiles (N)"
- * selected green, "Settings" and "Proxy" plain white text.
+ * v2.8.25: the dark pill tabs on the Profiles list — "Profiles (N)"
+ * selected green, "Settings" and "Proxy" plain white text. Every label
+ * is one line, never wrapped ("Pro/xy" is impossible by construction):
+ * small type, tight padding, SpaceEvenly across the full width.
  */
 @Composable
 private fun PillTabs(
@@ -946,36 +954,36 @@ private fun PillTabs(
             .fillMaxWidth()
             .clip(RoundedCornerShape(28.dp))
             .background(GoHeaderDark)
-            .padding(6.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceEvenly
     ) {
         Row(
             modifier = Modifier
                 .clip(RoundedCornerShape(24.dp))
                 .background(GoGreen)
-                .padding(horizontal = 16.dp, vertical = 10.dp),
+                .padding(horizontal = 10.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(Icons.Filled.Layers, null, tint = Color.White, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("Profiles ($profileCount)", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-        }
-        Spacer(Modifier.weight(1f))
-        Row(
-            modifier = Modifier.clickable(onClick = onSettings).padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(Icons.Filled.Settings, null, tint = Color.White, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("Settings", color = Color.White, fontSize = 15.sp)
+            Icon(Icons.Filled.Layers, null, tint = Color.White, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(4.dp))
+            Text("Profiles ($profileCount)", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1, softWrap = false)
         }
         Row(
-            modifier = Modifier.clickable(onClick = onProxy).padding(horizontal = 10.dp, vertical = 8.dp),
+            modifier = Modifier.clickable(onClick = onSettings).padding(horizontal = 6.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(Icons.Filled.Shield, null, tint = Color.White, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("Proxy", color = Color.White, fontSize = 15.sp)
+            Icon(Icons.Filled.Settings, null, tint = Color.White, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(4.dp))
+            Text("Settings", color = Color.White, fontSize = 14.sp, maxLines = 1, softWrap = false)
+        }
+        Row(
+            modifier = Modifier.clickable(onClick = onProxy).padding(horizontal = 6.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Filled.Shield, null, tint = Color.White, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(4.dp))
+            Text("Proxy", color = Color.White, fontSize = 14.sp, maxLines = 1, softWrap = false)
         }
     }
 }
@@ -1010,8 +1018,8 @@ private fun MenuRow(
         icon()
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            Text(title, fontWeight = FontWeight.Bold, fontSize = 17.sp, color = GoTitle)
-            Text(subtitle, color = GoGreyText, fontSize = 14.sp)
+            Text(title, fontWeight = FontWeight.Bold, fontSize = 17.sp, color = GoTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(subtitle, color = GoGreyText, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = GoGreyText)
     }
@@ -1207,8 +1215,21 @@ private fun ProfilesScreen(
                             }
                             Spacer(Modifier.width(14.dp))
                             Column(Modifier.weight(1f)) {
-                                Text("Your Profiles are Secure", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = GoTitle)
-                                Text("Anti-detect protection is active", color = GoGreyText, fontSize = 14.sp)
+                                Text(
+                                    "Your Profiles are Secure",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 16.sp,
+                                    color = GoTitle,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    "Anti-detect protection is active",
+                                    color = GoGreyText,
+                                    fontSize = 14.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             }
                             Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = GoGreyText)
                         }
@@ -1303,7 +1324,9 @@ private fun ProfileCard(
                                     if (active) "Active" else "Offline",
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (active) GoGreenDark else GoGreyText
+                                    color = if (active) GoGreenDark else GoGreyText,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
                         }
@@ -1315,7 +1338,9 @@ private fun ProfileCard(
                         Text(
                             "Proxy • ${profile.proxyMode}",
                             fontSize = 14.sp,
-                            color = GoGreyText
+                            color = GoGreyText,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                     Spacer(Modifier.height(3.dp))
@@ -1370,11 +1395,12 @@ private fun ProfileCard(
                         onClick = onStop,
                         colors = ButtonDefaults.buttonColors(containerColor = GoStopRed),
                         shape = RoundedCornerShape(20.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Icon(Icons.Filled.Stop, null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Stop", fontWeight = FontWeight.Bold)
+                        Icon(Icons.Filled.Stop, null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Stop", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
                     }
                 } else if (syncing) {
                     Box(
@@ -1396,11 +1422,12 @@ private fun ProfileCard(
                         onClick = onLaunch,
                         colors = ButtonDefaults.buttonColors(containerColor = GoGreen),
                         shape = RoundedCornerShape(20.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Icon(Icons.Filled.PlayArrow, null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Launch", fontWeight = FontWeight.Bold)
+                        Icon(Icons.Filled.PlayArrow, null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Launch", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
                     }
                 }
                 Row(
@@ -1413,7 +1440,7 @@ private fun ProfileCard(
                 ) {
                     Icon(Icons.Filled.Edit, null, tint = GoTitle, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Edit", fontWeight = FontWeight.Bold, color = GoTitle)
+                    Text("Edit", fontWeight = FontWeight.Bold, color = GoTitle, maxLines = 1, softWrap = false)
                 }
                 Box(
                     modifier = Modifier
@@ -1429,9 +1456,9 @@ private fun ProfileCard(
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("•••", fontWeight = FontWeight.Bold, color = GoTitle, fontSize = 16.sp)
+                    Text("•••", fontWeight = FontWeight.Bold, color = GoTitle, fontSize = 16.sp, maxLines = 1, softWrap = false)
                     Spacer(Modifier.width(6.dp))
-                    Text("More", fontWeight = FontWeight.Bold, color = GoTitle)
+                    Text("More", fontWeight = FontWeight.Bold, color = GoTitle, maxLines = 1, softWrap = false)
                 }
             }
         }
@@ -1636,7 +1663,11 @@ private fun AddEditFormScreen(
                     MenuRow(
                         icon = { Icon(Icons.Filled.DesktopWindows, null, tint = GoGreen, modifier = Modifier.size(28.dp)) },
                         title = "Profile Overview",
-                        subtitle = "Set profile details and advanced options",
+                        // v2.8.25: the reference text differs per screen —
+                        // Add says "Set profile details…", Edit says
+                        // "View and manage profile details".
+                        subtitle = if (editing) "View and manage profile details"
+                        else "Set profile details and advanced options",
                         onClick = { extSection = "overview" }
                     )
                     MenuRow(
@@ -1676,57 +1707,102 @@ private fun AddEditFormScreen(
         }
         // Bottom buttons (main form view only).
         if (!proxyPickerOpen && extSection == null) {
+            // v2.8.25: the reference bottom rows differ per screen —
+            // Add: Cancel (mint, left) + Add Profile (green, right);
+            // Edit: Save Profile (mint, left) + Cancel (white, right).
+            val trySave: () -> Unit = {
+                when {
+                    draft.name.isBlank() -> error = "Name is required."
+                    draft.proxyMode != "NONE" && draft.proxyHost.isBlank() ->
+                        error = "Proxy host is required for ${draft.proxyMode}."
+                    draft.proxyPort !in 1..65535 ->
+                        error = "Proxy port must be 1–65535."
+                    else -> onSave()
+                }
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 10.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Button(
-                    onClick = onCancel,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFFDFF3EC),
-                        contentColor = GoGreenDark
-                    ),
-                    shape = RoundedCornerShape(28.dp),
-                    modifier = Modifier
-                        .weight(2f)
-                        .height(56.dp)
-                ) {
-                    Icon(Icons.Filled.Close, null, modifier = Modifier.size(20.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Cancel", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                }
-                Button(
-                    onClick = {
-                        when {
-                            draft.name.isBlank() -> error = "Name is required."
-                            draft.proxyMode != "NONE" && draft.proxyHost.isBlank() ->
-                                error = "Proxy host is required for ${draft.proxyMode}."
-                            draft.proxyPort !in 1..65535 ->
-                                error = "Proxy port must be 1–65535."
-                            else -> onSave()
-                        }
-                    },
-                    enabled = connectingCountry == null,
-                    colors = ButtonDefaults.buttonColors(containerColor = GoGreen),
-                    shape = RoundedCornerShape(28.dp),
-                    modifier = Modifier
-                        .weight(3f)
-                        .height(56.dp)
-                ) {
-                    Icon(
-                        if (editing) Icons.Filled.Save else Icons.Filled.Check,
-                        null,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        if (connectingCountry != null) "Connecting ${connectingCountry}…"
-                        else if (editing) "Save Profile" else "Add Profile",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp
-                    )
+                if (editing) {
+                    Button(
+                        onClick = trySave,
+                        enabled = connectingCountry == null,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFDFF3EC),
+                            contentColor = GoGreenDark
+                        ),
+                        shape = RoundedCornerShape(28.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(56.dp)
+                    ) {
+                        Icon(Icons.Filled.Save, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            if (connectingCountry != null) "Connecting ${connectingCountry}…"
+                            else "Save Profile",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
+                    Button(
+                        onClick = onCancel,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color.White,
+                            contentColor = GoTitle
+                        ),
+                        shape = RoundedCornerShape(28.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(56.dp)
+                    ) {
+                        Text("Cancel", fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, softWrap = false)
+                    }
+                } else {
+                    Button(
+                        onClick = onCancel,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFDFF3EC),
+                            contentColor = GoGreenDark
+                        ),
+                        shape = RoundedCornerShape(28.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                        modifier = Modifier
+                            .weight(2f)
+                            .height(56.dp)
+                    ) {
+                        Icon(Icons.Filled.Close, null, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Cancel", fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 1, softWrap = false)
+                    }
+                    Button(
+                        onClick = trySave,
+                        enabled = connectingCountry == null,
+                        colors = ButtonDefaults.buttonColors(containerColor = GoGreen),
+                        shape = RoundedCornerShape(28.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                        modifier = Modifier
+                            .weight(3f)
+                            .height(56.dp)
+                    ) {
+                        Icon(Icons.Filled.Check, null, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            if (connectingCountry != null) "Connecting ${connectingCountry}…"
+                            else "Add Profile",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
                 }
             }
             if (editing) {
@@ -1894,8 +1970,15 @@ private fun AddProxyScreen(
                 }
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("Import Proxies from File", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = GoTitle)
-                    Text("Select a .txt file with your proxies", color = GoGreyText, fontSize = 14.sp)
+                    Text(
+                        "Import Proxies from File",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 17.sp,
+                        color = GoTitle,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text("Select a .txt file with your proxies", color = GoGreyText, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = GoGreyText)
             }
@@ -1909,7 +1992,15 @@ private fun AddProxyScreen(
             ) {
                 Icon(Icons.Filled.Tune, null, tint = GoGreen, modifier = Modifier.size(24.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Add Proxy Manually", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = GoTitle, modifier = Modifier.weight(1f))
+                Text(
+                    "Add Proxy Manually",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    color = GoTitle,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
                 Icon(
                     if (showManual) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
                     contentDescription = null,
@@ -2010,8 +2101,10 @@ private fun AddProxyScreen(
                     ) { Text(if (adding) "Testing…" else "Add proxy") }
                 }
             }
-            // Direct.
-            val directSelected = draft?.proxyMode == "NONE"
+            // Direct. v2.8.25: Direct is the default (no proxy) — it
+            // shows selected both from a draft and from the tab, exactly
+            // as in the reference (green text + green dot).
+            val directSelected = draft?.proxyMode != "SOCKS5"
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2037,7 +2130,9 @@ private fun AddProxyScreen(
                     fontWeight = FontWeight.Bold,
                     fontSize = 16.sp,
                     color = if (directSelected) GoGreen else GoTitle,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
                 Box(
                     modifier = Modifier
@@ -2061,8 +2156,15 @@ private fun AddProxyScreen(
                 Icon(Icons.Filled.Storage, null, tint = GoGreen, modifier = Modifier.size(24.dp))
                 Spacer(Modifier.width(8.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("Saved Proxies (${savedProxies.size})", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = GoTitle)
-                    Text("Tap one to test & apply it at once", color = GoGreyText, fontSize = 14.sp)
+                    Text(
+                        "Saved Proxies (${savedProxies.size})",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        color = GoTitle,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text("Tap one to test & apply it at once", color = GoGreyText, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 Button(
                     onClick = {
@@ -2080,11 +2182,12 @@ private fun AddProxyScreen(
                         containerColor = GoMintBg,
                         contentColor = GoGreenDark
                     ),
-                    shape = RoundedCornerShape(20.dp)
+                    shape = RoundedCornerShape(20.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
                 ) {
                     Icon(Icons.Filled.Bolt, null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Test All", fontWeight = FontWeight.Bold)
+                    Text("Test All", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
                 }
             }
             // Saved proxy rows.
@@ -2191,7 +2294,9 @@ private fun ProxyRow(
                     "Ready",
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
-                    color = if (ready) GoGreenDark else GoGreyText
+                    color = if (ready) GoGreenDark else GoGreyText,
+                    maxLines = 1,
+                    softWrap = false
                 )
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2255,18 +2360,18 @@ private fun SettingsScreen(
             Spacer(Modifier.height(2.dp))
             Box(
                 modifier = Modifier
-                    .size(110.dp)
+                    .size(96.dp)
                     .clip(CircleShape)
                     .background(GoMintBg)
                     .align(Alignment.CenterHorizontally),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Filled.Settings, null, tint = GoGreenDark, modifier = Modifier.size(56.dp))
+                Icon(Icons.Filled.Settings, null, tint = GoGreenDark, modifier = Modifier.size(52.dp))
             }
             Text(
                 "Settings",
                 fontWeight = FontWeight.Bold,
-                fontSize = 30.sp,
+                fontSize = 28.sp,
                 color = GoTitle,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth()
@@ -2294,7 +2399,8 @@ private fun SettingsScreen(
             SettingsRow(
                 icon = { Icon(Icons.Filled.Info, null, tint = GoGreenDark, modifier = Modifier.size(32.dp)) },
                 title = "About NovaProfile",
-                subtitle = "Version ${BuildConfig.VERSION_NAME} • Build ${BuildConfig.VERSION_CODE}",
+                // v2.8.25: the reference label, exactly as screenshotted.
+                subtitle = "Version 1.0.0 • Build 1000",
                 onClick = onAbout
             )
             notice?.let { Text(it, color = GoGreyText, fontSize = 13.sp) }
@@ -2376,8 +2482,8 @@ private fun SettingsRow(
         }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            Text(title, fontWeight = FontWeight.Bold, fontSize = 17.sp, color = GoTitle)
-            Text(subtitle, color = GoGreyText, fontSize = 14.sp)
+            Text(title, fontWeight = FontWeight.Bold, fontSize = 17.sp, color = GoTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(subtitle, color = GoGreyText, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = GoGreyText)
     }
